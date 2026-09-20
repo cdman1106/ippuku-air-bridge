@@ -32,25 +32,42 @@ public class BridgeService extends Service {
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
     public static final String ACTION_SEND_BARCODE = "jp.ippuku.airbridge.SEND_BARCODE";
     public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
+    public static final String ACTION_MOUSE_MOVE = "jp.ippuku.airbridge.MOUSE_MOVE";
+    public static final String ACTION_MOUSE_CLICK = "jp.ippuku.airbridge.MOUSE_CLICK";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
+    public static final String EXTRA_DX = "dx";
+    public static final String EXTRA_DY = "dy";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
-    // Standard 8-byte USB/Bluetooth boot-keyboard report descriptor.
+    // Composite HID descriptor: Report ID 1 = keyboard, Report ID 2 = relative mouse.
+    // This lets the dedicated order iPad receive barcode keystrokes and a pointer click
+    // without touching Airレジ private APIs.
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
-            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,
+            // Keyboard
+            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,(byte)0x85,0x01,
             0x05,0x07,0x19,(byte)0xE0,0x29,(byte)0xE7,
             0x15,0x00,0x25,0x01,0x75,0x01,(byte)0x95,0x08,(byte)0x81,0x02,
             (byte)0x95,0x01,0x75,0x08,(byte)0x81,0x01,
             (byte)0x95,0x05,0x75,0x01,0x05,0x08,0x19,0x01,0x29,0x05,
             (byte)0x91,0x02,(byte)0x95,0x01,0x75,0x03,(byte)0x91,0x01,
             (byte)0x95,0x06,0x75,0x08,0x15,0x00,0x25,0x65,0x05,0x07,
-            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0
+            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0,
+
+            // Mouse: buttons + X/Y relative movement
+            0x05,0x01,0x09,0x02,(byte)0xA1,0x01,(byte)0x85,0x02,
+            0x09,0x01,(byte)0xA1,0x00,
+            0x05,0x09,0x19,0x01,0x29,0x03,0x15,0x00,0x25,0x01,
+            (byte)0x95,0x03,0x75,0x01,(byte)0x81,0x02,
+            (byte)0x95,0x01,0x75,0x05,(byte)0x81,0x01,
+            0x05,0x01,0x09,0x30,0x09,0x31,0x15,(byte)0x81,0x25,0x7F,
+            0x75,0x08,(byte)0x95,0x02,(byte)0x81,0x06,
+            (byte)0xC0,(byte)0xC0
     };
 
     private BluetoothAdapter adapter;
@@ -170,6 +187,10 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_KEY.equals(action)) {
                 String key = intent.getStringExtra(EXTRA_KEY);
                 if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
+            } else if (ACTION_MOUSE_MOVE.equals(action)) {
+                moveMouse(intent.getIntExtra(EXTRA_DX, 0), intent.getIntExtra(EXTRA_DY, 0));
+            } else if (ACTION_MOUSE_CLICK.equals(action)) {
+                clickMouse();
             }
         }
         return START_STICKY;
@@ -369,6 +390,46 @@ public class BridgeService extends Service {
         });
     }
 
+    private void moveMouse(int dx, int dy) {
+        if (!connected || target == null || hid == null) {
+            publish("マウス送信不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                int rx = dx, ry = dy;
+                while (rx != 0 || ry != 0) {
+                    int sx = Math.max(-127, Math.min(127, rx));
+                    int sy = Math.max(-127, Math.min(127, ry));
+                    byte[] report = new byte[]{0, (byte)sx, (byte)sy};
+                    if (!hid.sendReport(target, 2, report)) throw new IllegalStateException();
+                    rx -= sx; ry -= sy;
+                    Thread.sleep(18);
+                }
+                publish("マウス移動: " + dx + "," + dy);
+            } catch (Exception e) {
+                publish("マウス移動失敗");
+            }
+        });
+    }
+
+    private void clickMouse() {
+        if (!connected || target == null || hid == null) {
+            publish("クリック不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                if (!hid.sendReport(target, 2, new byte[]{1,0,0})) throw new IllegalStateException();
+                Thread.sleep(45);
+                if (!hid.sendReport(target, 2, new byte[]{0,0,0})) throw new IllegalStateException();
+                publish("マウスクリック送信");
+            } catch (Exception e) {
+                publish("マウスクリック失敗");
+            }
+        });
+    }
+
     private void typeBarcode(String code) throws Exception {
         for (int i=0;i<code.length();i++) {
             Key k = keyForDigit(code.charAt(i));
@@ -383,9 +444,9 @@ public class BridgeService extends Service {
         down[2] = keyCode;
         byte[] up = new byte[8];
 
-        if (!hid.sendReport(target, 0, down)) throw new IllegalStateException("key down failed");
+        if (!hid.sendReport(target, 1, down)) throw new IllegalStateException("key down failed");
         Thread.sleep(28);
-        if (!hid.sendReport(target, 0, up)) throw new IllegalStateException("key up failed");
+        if (!hid.sendReport(target, 1, up)) throw new IllegalStateException("key up failed");
         Thread.sleep(28);
     }
 
