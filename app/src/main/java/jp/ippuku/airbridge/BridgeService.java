@@ -375,6 +375,7 @@ public class BridgeService extends Service {
             press(k.code);
             Thread.sleep(18);
         }
+        Thread.sleep(500); // Airレジが検索文字列を確定する時間を待つ
         press((byte)0x28); // Enter
     }
 
