@@ -16,6 +16,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -36,6 +37,8 @@ public class MainActivity extends Activity {
     private BluetoothAdapter adapter;
     private TextView status;
     private Spinner devices;
+    private EditText testBarcode;
+    private EditText testMacro;
     private final List<BluetoothDevice> bonded = new ArrayList<>();
     private BroadcastReceiver statusReceiver;
     private boolean receiverRegistered;
@@ -119,6 +122,106 @@ public class MainActivity extends Activity {
         btSettings.setText("iPadが出ない場合：Bluetooth設定を開く");
         btSettings.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         body.addView(btSettings);
+
+        TextView diagTitle = new TextView(this);
+        diagTitle.setText("テスト操作（開発用）");
+        diagTitle.setTextSize(20);
+        diagTitle.setPadding(0, dp(20), 0, dp(8));
+        body.addView(diagTitle);
+
+        TextView diagHelp = new TextView(this);
+        diagHelp.setText("Termux不要。ここからAirレジへのキー送信を確認できます。最終運用ではこの操作は使いません。");
+        diagHelp.setPadding(0, 0, 0, dp(8));
+        body.addView(diagHelp);
+
+        testBarcode = new EditText(this);
+        testBarcode.setSingleLine(true);
+        testBarcode.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        testBarcode.setText("4944496690023");
+        testBarcode.setHint("テスト用バーコード");
+        body.addView(testBarcode);
+
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button sendOnly = new Button(this);
+        sendOnly.setText("数字だけ");
+        sendOnly.setOnClickListener(v -> sendBarcodeOnly());
+        row1.addView(sendOnly, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button search = new Button(this);
+        search.setText("検索まで");
+        search.setOnClickListener(v -> sendBarcodeSearch());
+        row1.addView(search, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(row1);
+
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button enter = new Button(this);
+        enter.setText("Enter");
+        enter.setOnClickListener(v -> sendKey("ENTER"));
+        row2.addView(enter, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button tab = new Button(this);
+        tab.setText("Tab");
+        tab.setOnClickListener(v -> sendKey("TAB"));
+        row2.addView(tab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button shiftTab = new Button(this);
+        shiftTab.setText("Shift+Tab");
+        shiftTab.setOnClickListener(v -> sendKey("SHIFT_TAB"));
+        row2.addView(shiftTab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button space = new Button(this);
+        space.setText("Space");
+        space.setOnClickListener(v -> sendKey("SPACE"));
+        row2.addView(space, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(row2);
+
+        LinearLayout row3 = new LinearLayout(this);
+        row3.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button up = new Button(this);
+        up.setText("↑");
+        up.setOnClickListener(v -> sendKey("UP"));
+        row3.addView(up, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button down = new Button(this);
+        down.setText("↓");
+        down.setOnClickListener(v -> sendKey("DOWN"));
+        row3.addView(down, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button left = new Button(this);
+        left.setText("←");
+        left.setOnClickListener(v -> sendKey("LEFT"));
+        row3.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button right = new Button(this);
+        right.setText("→");
+        right.setOnClickListener(v -> sendKey("RIGHT"));
+        row3.addView(right, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(row3);
+
+        Button clear = new Button(this);
+        clear.setText("検索欄を全消去");
+        clear.setOnClickListener(v -> sendMacro("CLEAR"));
+        body.addView(clear);
+
+        testMacro = new EditText(this);
+        testMacro.setSingleLine(false);
+        testMacro.setMinLines(2);
+        testMacro.setText("CLEAR,TEXT:4944496690023,WAIT:2500,ENTER");
+        testMacro.setHint("例: CLEAR,TEXT:4944496690023,WAIT:2500,ENTER,TAB*3,SPACE");
+        body.addView(testMacro);
+
+        Button runMacro = new Button(this);
+        runMacro.setText("マクロ実行");
+        runMacro.setOnClickListener(v -> sendMacro(testMacro.getText().toString()));
+        body.addView(runMacro);
 
         TextView note = new TextView(this);
         note.setPadding(0,p,0,0);
@@ -220,6 +323,48 @@ public class MainActivity extends Activity {
         try { name = d.getName(); } catch (SecurityException e) { name = "iPad"; }
         status.setText("注文専用端末を " + (name == null ? "iPad" : name) + " に設定。自動接続中…");
         toast("設定しました。以後は自動再接続します。");
+    }
+
+    private void sendBarcodeOnly() {
+        String code = testBarcode == null ? "" : testBarcode.getText().toString().trim();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SEND_BARCODE_ONLY);
+        svc.putExtra(BridgeService.EXTRA_CODE, code);
+        startForegroundCompat(svc);
+    }
+
+    private void sendBarcodeSearch() {
+        String code = testBarcode == null ? "" : testBarcode.getText().toString().trim();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SEND_BARCODE);
+        svc.putExtra(BridgeService.EXTRA_CODE, code);
+        startForegroundCompat(svc);
+    }
+
+    private void sendKey(String key) {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SEND_KEY);
+        svc.putExtra(BridgeService.EXTRA_KEY, key);
+        startForegroundCompat(svc);
+    }
+
+    private void sendMacro(String macro) {
+        if (macro == null || macro.trim().isEmpty()) {
+            toast("マクロを入力してください。");
+            return;
+        }
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SEND_MACRO);
+        svc.putExtra(BridgeService.EXTRA_MACRO, macro.trim());
+        startForegroundCompat(svc);
     }
 
     private void startBridgeService() {
