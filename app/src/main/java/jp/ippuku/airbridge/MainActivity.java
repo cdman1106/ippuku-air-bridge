@@ -42,6 +42,8 @@ public class MainActivity extends Activity {
     private EditText quickDelayMs;
     private EditText quickTabCount;
     private EditText quickTabGapMs;
+    private EditText mouseXSteps;
+    private EditText mouseYSteps;
     private TextView historyView;
     private final List<BluetoothDevice> bonded = new ArrayList<>();
     private BroadcastReceiver statusReceiver;
@@ -86,6 +88,8 @@ public class MainActivity extends Activity {
         if (quickDelayMs != null) e.putString("test_delay", quickDelayMs.getText().toString());
         if (quickTabCount != null) e.putString("test_tab_count", quickTabCount.getText().toString());
         if (quickTabGapMs != null) e.putString("test_tab_gap", quickTabGapMs.getText().toString());
+        if (mouseXSteps != null) e.putString("mouse_x_steps", mouseXSteps.getText().toString());
+        if (mouseYSteps != null) e.putString("mouse_y_steps", mouseYSteps.getText().toString());
         e.apply();
     }
 
@@ -95,6 +99,8 @@ public class MainActivity extends Activity {
         if (quickDelayMs != null) quickDelayMs.setText(p.getString("test_delay", "3000"));
         if (quickTabCount != null) quickTabCount.setText(p.getString("test_tab_count", "1"));
         if (quickTabGapMs != null) quickTabGapMs.setText(p.getString("test_tab_gap", "700"));
+        if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
+        if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
     }
 
     @Override protected void onDestroy() {
@@ -255,9 +261,47 @@ public class MainActivity extends Activity {
 
         Button mkHome = new Button(this);
         mkHome.setText("ポインターを左上方向へ寄せる");
-        mkHome.setOnClickListener(v ->
-                sendMacro("KP7*20,WAIT:300,KP7*20"));
+        mkHome.setOnClickListener(v -> runMouseKeyHome());
         body.addView(mkHome);
+
+        LinearLayout mkCoords = new LinearLayout(this);
+        mkCoords.setOrientation(LinearLayout.HORIZONTAL);
+
+        mouseXSteps = new EditText(this);
+        mouseXSteps.setSingleLine(true);
+        mouseXSteps.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        mouseXSteps.setText("10");
+        mouseXSteps.setHint("右移動回数");
+        mkCoords.addView(mouseXSteps, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        mouseYSteps = new EditText(this);
+        mouseYSteps.setSingleLine(true);
+        mouseYSteps.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        mouseYSteps.setText("10");
+        mouseYSteps.setHint("下移動回数");
+        mkCoords.addView(mouseYSteps, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(mkCoords);
+
+        LinearLayout mkCalRow = new LinearLayout(this);
+        mkCalRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button mkMoveOnly = new Button(this);
+        mkMoveOnly.setText("左上→指定位置へ移動");
+        mkMoveOnly.setOnClickListener(v -> runMouseKeyMove(false));
+        mkCalRow.addView(mkMoveOnly, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button mkMoveClick = new Button(this);
+        mkMoveClick.setText("移動→クリック");
+        mkMoveClick.setOnClickListener(v -> runMouseKeyMove(true));
+        mkCalRow.addView(mkMoveClick, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(mkCalRow);
+
+        Button mkSearchClick = new Button(this);
+        mkSearchClick.setText("検索→指定位置クリック（一括）");
+        mkSearchClick.setOnClickListener(v -> runSearchThenMouseKeyClick());
+        body.addView(mkSearchClick);
 
         LinearLayout simpleRow = new LinearLayout(this);
         simpleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -530,6 +574,54 @@ public class MainActivity extends Activity {
 
     private String currentBarcode() {
         return testBarcode == null ? "" : testBarcode.getText().toString().trim();
+    }
+
+    private String buildRepeatedKey(String key, int count, int gapMs) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (b.length() > 0) b.append(",");
+            b.append(key);
+            if (i < count - 1 && gapMs > 0) b.append(",WAIT:").append(gapMs);
+        }
+        return b.toString();
+    }
+
+    private void runMouseKeyHome() {
+        String upLeft = buildRepeatedKey("KP7", 35, 90);
+        sendMacro(upLeft);
+    }
+
+    private String buildMouseMoveMacro(boolean click) {
+        int x = readInt(mouseXSteps, 10, 0, 120);
+        int y = readInt(mouseYSteps, 10, 0, 120);
+        StringBuilder m = new StringBuilder();
+        m.append(buildRepeatedKey("KP7", 35, 70));
+        if (x > 0) {
+            if (m.length() > 0) m.append(",WAIT:250,");
+            m.append(buildRepeatedKey("KP6", x, 90));
+        }
+        if (y > 0) {
+            if (m.length() > 0) m.append(",WAIT:250,");
+            m.append(buildRepeatedKey("KP2", y, 90));
+        }
+        if (click) m.append(",WAIT:300,KP5");
+        return m.toString();
+    }
+
+    private void runMouseKeyMove(boolean click) {
+        sendMacro(buildMouseMoveMacro(click));
+    }
+
+    private void runSearchThenMouseKeyClick() {
+        String code = currentBarcode();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        int wait = readInt(quickDelayMs, 3000, 1000, 10000);
+        String macro = "CLEAR,WAIT:500,TEXT:" + code + ",WAIT:" + wait +
+                ",ENTER,WAIT:1500," + buildMouseMoveMacro(true);
+        sendMacro(macro);
     }
 
     private void runOneShotDiagnostic() {
