@@ -32,9 +32,13 @@ public class BridgeService extends Service {
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
     public static final String ACTION_SEND_BARCODE = "jp.ippuku.airbridge.SEND_BARCODE";
     public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
+    public static final String ACTION_SEND_KEY_SEQUENCE = "jp.ippuku.airbridge.SEND_KEY_SEQUENCE";
+    public static final String ACTION_SEND_BARCODE_ONLY = "jp.ippuku.airbridge.SEND_BARCODE_ONLY";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
+    public static final String EXTRA_SEQUENCE = "sequence";
+    public static final String EXTRA_GAP_MS = "gap_ms";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
@@ -167,9 +171,16 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_BARCODE.equals(action)) {
                 String code = intent.getStringExtra(EXTRA_CODE);
                 if (code != null && !code.trim().isEmpty()) enqueueBarcode(code.trim());
+            } else if (ACTION_SEND_BARCODE_ONLY.equals(action)) {
+                String code = intent.getStringExtra(EXTRA_CODE);
+                if (code != null && !code.trim().isEmpty()) sendBarcodeOnly(code.trim());
             } else if (ACTION_SEND_KEY.equals(action)) {
                 String key = intent.getStringExtra(EXTRA_KEY);
                 if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
+            } else if (ACTION_SEND_KEY_SEQUENCE.equals(action)) {
+                String sequence = intent.getStringExtra(EXTRA_SEQUENCE);
+                int gapMs = Math.max(100, intent.getIntExtra(EXTRA_GAP_MS, 350));
+                if (sequence != null) sendDiagnosticSequence(sequence, gapMs);
             }
         }
         return START_STICKY;
@@ -349,19 +360,7 @@ public class BridgeService extends Service {
         }
         sender.execute(() -> {
             try {
-                byte code;
-                switch (key) {
-                    case "ENTER": code = 0x28; break;
-                    case "TAB": code = 0x2B; break;
-                    case "DOWN": code = 0x51; break;
-                    case "UP": code = 0x52; break;
-                    case "ESC": code = 0x29; break;
-                    case "SPACE": code = 0x2C; break;
-                    default:
-                        publish("未対応キー: " + key);
-                        return;
-                }
-                press(code);
+                sendNamedKey(key);
                 publish("診断キー送信: " + key);
             } catch (Exception e) {
                 publish("診断キー送信失敗: " + key);
@@ -369,25 +368,95 @@ public class BridgeService extends Service {
         });
     }
 
+    private void sendDiagnosticSequence(String sequence, int gapMs) {
+        if (!connected || target == null || hid == null) {
+            publish("キー列送信不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                String[] keys = sequence.toUpperCase().split(",");
+                for (String raw : keys) {
+                    String key = raw.trim();
+                    if (key.isEmpty()) continue;
+                    sendNamedKey(key);
+                    Thread.sleep(gapMs);
+                }
+                publish("診断キー列送信完了: " + sequence);
+            } catch (Exception e) {
+                publish("診断キー列送信失敗: " + sequence);
+            }
+        });
+    }
+
+    private void sendNamedKey(String key) throws Exception {
+        switch (key) {
+            case "ENTER": press((byte)0x28); break;
+            case "TAB": press((byte)0x2B); break;
+            case "SHIFT_TAB": press((byte)0x02, (byte)0x2B); break;
+            case "DOWN": press((byte)0x51); break;
+            case "UP": press((byte)0x52); break;
+            case "LEFT": press((byte)0x50); break;
+            case "RIGHT": press((byte)0x4F); break;
+            case "ESC": press((byte)0x29); break;
+            case "SPACE": press((byte)0x2C); break;
+            default: throw new IllegalArgumentException("unsupported key");
+        }
+    }
+
+    private void sendBarcodeOnly(String code) {
+        if (!code.matches("[0-9]+")) {
+            publish("バーコードは数字のみ対応: " + code);
+            return;
+        }
+        if (!connected || target == null || hid == null) {
+            publish("バーコード送信不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                typeDigits(code);
+                publish("バーコード文字列のみ送信完了: " + code);
+            } catch (Exception e) {
+                publish("バーコード文字列送信失敗: " + code);
+            }
+        });
+    }
+
     private void typeBarcode(String code) throws Exception {
+        typeDigits(code);
+
+        // Airレジの検索欄は文字入力直後のReturnを取りこぼすことがある。
+        // 実機で「数字入力後、少し待ってReturn」なら確実に検索できたため、
+        // 固定2秒待機＋Return再送で検索結果表示を安定させる。
+        Thread.sleep(2000);
+        press((byte)0x28); // Enter / Return
+        Thread.sleep(800);
+        press((byte)0x28); // harmless retry while search field remains focused
+    }
+
+    private void typeDigits(String code) throws Exception {
         for (int i=0;i<code.length();i++) {
             Key k = keyForDigit(code.charAt(i));
             press(k.code);
-            Thread.sleep(18);
+            Thread.sleep(35);
         }
-        Thread.sleep(500); // Airレジが検索文字列を確定する時間を待つ
-        press((byte)0x28); // Enter
     }
 
     private void press(byte keyCode) throws Exception {
+        press((byte)0x00, keyCode);
+    }
+
+    private void press(byte modifier, byte keyCode) throws Exception {
         byte[] down = new byte[8];
+        down[0] = modifier;
         down[2] = keyCode;
         byte[] up = new byte[8];
 
         if (!hid.sendReport(target, 0, down)) throw new IllegalStateException("key down failed");
-        Thread.sleep(28);
+        Thread.sleep(45);
         if (!hid.sendReport(target, 0, up)) throw new IllegalStateException("key up failed");
-        Thread.sleep(28);
+        Thread.sleep(45);
     }
 
     private Key keyForDigit(char c) {
