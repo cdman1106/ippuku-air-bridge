@@ -93,7 +93,27 @@ public class MainActivity extends Activity {
 
         @Override public void onStartFailure(int errorCode) {
             advertising = false;
-            setStatus("BLE広告開始失敗: " + errorCode + "。この端末がBLE周辺機器モードに非対応の可能性があります。");
+            String reason;
+            switch (errorCode) {
+                case AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE:
+                    reason = "広告データが大きすぎます";
+                    break;
+                case AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS:
+                    reason = "同時BLE広告数の上限です";
+                    break;
+                case AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED:
+                    reason = "BLE広告は既に開始済みです";
+                    break;
+                case AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR:
+                    reason = "Bluetooth内部エラーです";
+                    break;
+                case AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED:
+                    reason = "この端末はBLE周辺機器広告に非対応です";
+                    break;
+                default:
+                    reason = "不明なBLE広告エラーです";
+            }
+            setStatus("BLE広告開始失敗: " + errorCode + "（" + reason + "）");
             updateButtons();
         }
     };
@@ -361,21 +381,18 @@ public class MainActivity extends Activity {
                 .setConnectable(true)
                 .build();
 
-        // Keep the primary BLE advertisement small.
-        // Error code 1 (ADVERTISE_FAILED_DATA_TOO_LARGE) occurs when the
-        // device name and HID UUID are packed into the same 31-byte packet.
+        // Minimal advertisement: HID service UUID only.
+        // Do not include the Android device name at all because long local
+        // names can also overflow the 31-byte scan-response limit and cause
+        // ADVERTISE_FAILED_DATA_TOO_LARGE (error 1).
         AdvertiseData data = new AdvertiseData.Builder()
                 .addServiceUuid(new ParcelUuid(HID_SERVICE))
                 .setIncludeDeviceName(false)
-                .build();
-
-        // Put the Android device name in the scan response instead.
-        AdvertiseData scanResponse = new AdvertiseData.Builder()
-                .setIncludeDeviceName(true)
+                .setIncludeTxPowerLevel(false)
                 .build();
 
         try {
-            advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback);
+            advertiser.startAdvertising(settings, data, advertiseCallback);
             setStatus("BLE広告を開始中…");
         } catch (SecurityException e) {
             setStatus("BLE広告権限がありません。");
