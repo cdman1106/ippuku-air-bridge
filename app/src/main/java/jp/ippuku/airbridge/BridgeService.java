@@ -149,6 +149,10 @@ public class BridgeService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        // The service may have been created before Android's runtime Bluetooth
+        // permission dialog completed. Every explicit start retries profile setup.
+        handler.postDelayed(() -> acquireHidProfile(), 250);
+
         if (intent != null) {
             String action = intent.getAction();
             if (ACTION_SET_TARGET.equals(action)) {
@@ -229,7 +233,7 @@ public class BridgeService extends Service {
             if (!ok) publish("HID登録開始に失敗。BluetoothをOFF→ONしてください。");
             else publish("Bluetoothバーコードリーダーを準備中…");
         } catch (SecurityException e) {
-            publish("Bluetooth権限エラー。");
+            publish("Bluetooth権限エラー: " + String.valueOf(e.getMessage()));
         } catch (Exception e) {
             publish("HID登録エラー: " + e.getClass().getSimpleName());
         }
