@@ -39,6 +39,10 @@ public class MainActivity extends Activity {
     private Spinner devices;
     private EditText testBarcode;
     private EditText testMacro;
+    private EditText quickDelayMs;
+    private EditText quickTabCount;
+    private EditText quickTabGapMs;
+    private TextView historyView;
     private final List<BluetoothDevice> bonded = new ArrayList<>();
     private BroadcastReceiver statusReceiver;
     private boolean receiverRegistered;
@@ -67,6 +71,7 @@ public class MainActivity extends Activity {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         String last = p.getString("last_status", "Bluetooth待機中…");
         status.setText(last);
+        refreshHistory();
     }
 
     @Override protected void onDestroy() {
@@ -134,12 +139,37 @@ public class MainActivity extends Activity {
         simpleHelp.setPadding(0, 0, 0, dp(8));
         body.addView(simpleHelp);
 
+        LinearLayout quickSettings = new LinearLayout(this);
+        quickSettings.setOrientation(LinearLayout.HORIZONTAL);
+
+        quickDelayMs = new EditText(this);
+        quickDelayMs.setSingleLine(true);
+        quickDelayMs.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        quickDelayMs.setText("2500");
+        quickDelayMs.setHint("検索待ち時間(ms)");
+        quickSettings.addView(quickDelayMs, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        quickTabCount = new EditText(this);
+        quickTabCount.setSingleLine(true);
+        quickTabCount.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        quickTabCount.setText("1");
+        quickTabCount.setHint("Tab回数");
+        quickSettings.addView(quickTabCount, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        quickTabGapMs = new EditText(this);
+        quickTabGapMs.setSingleLine(true);
+        quickTabGapMs.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        quickTabGapMs.setText("700");
+        quickTabGapMs.setHint("Tab間隔(ms)");
+        quickSettings.addView(quickTabGapMs, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(quickSettings);
+
         Button quickSearch = new Button(this);
         quickSearch.setText("① 商品候補を表示");
         quickSearch.setTextSize(18);
         quickSearch.setMinHeight(dp(56));
-        quickSearch.setOnClickListener(v ->
-                sendMacro("CLEAR,WAIT:300,TEXT:4944496690023,WAIT:2500,ENTER"));
+        quickSearch.setOnClickListener(v -> runQuickSearch());
         body.addView(quickSearch);
 
         LinearLayout simpleRow = new LinearLayout(this);
@@ -172,9 +202,35 @@ public class MainActivity extends Activity {
 
         Button autoFocusWalk = new Button(this);
         autoFocusWalk.setText("フォーカスをゆっくり10個進める");
-        autoFocusWalk.setOnClickListener(v ->
-                sendMacro("TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB"));
+        autoFocusWalk.setOnClickListener(v -> runTabWalk());
         body.addView(autoFocusWalk);
+
+        Button quickAddSpace = new Button(this);
+        quickAddSpace.setText("商品追加まで一括テスト（Space決定）");
+        quickAddSpace.setMinHeight(dp(56));
+        quickAddSpace.setOnClickListener(v -> runQuickAdd("SPACE"));
+        body.addView(quickAddSpace);
+
+        Button quickAddEnter = new Button(this);
+        quickAddEnter.setText("商品追加まで一括テスト（Enter決定）");
+        quickAddEnter.setOnClickListener(v -> runQuickAdd("ENTER"));
+        body.addView(quickAddEnter);
+
+        historyView = new TextView(this);
+        historyView.setTextSize(13);
+        historyView.setPadding(0, dp(16), 0, dp(8));
+        historyView.setText("操作履歴：まだありません");
+        body.addView(historyView);
+
+        Button clearHistory = new Button(this);
+        clearHistory.setText("操作履歴を消す");
+        clearHistory.setOnClickListener(v -> {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .remove("status_history")
+                    .apply();
+            refreshHistory();
+        });
+        body.addView(clearHistory);
 
         TextView advancedHint = new TextView(this);
         advancedHint.setText("↓ ここから下は必要な時だけ使う詳細テスト");
@@ -383,6 +439,80 @@ public class MainActivity extends Activity {
         toast("設定しました。以後は自動再接続します。");
     }
 
+    private int readInt(EditText e, int fallback, int min, int max) {
+        try {
+            int v = Integer.parseInt(e.getText().toString().trim());
+            return Math.max(min, Math.min(max, v));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private String currentBarcode() {
+        return testBarcode == null ? "" : testBarcode.getText().toString().trim();
+    }
+
+    private void runQuickSearch() {
+        String code = currentBarcode();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        int wait = readInt(quickDelayMs, 2500, 0, 10000);
+        sendMacro("CLEAR,WAIT:300,TEXT:" + code + ",WAIT:" + wait + ",ENTER");
+    }
+
+    private void runTabWalk() {
+        int count = readInt(quickTabCount, 10, 1, 30);
+        int gap = readInt(quickTabGapMs, 700, 100, 3000);
+        StringBuilder m = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (m.length() > 0) m.append(",");
+            m.append("TAB");
+            if (i < count - 1) m.append(",WAIT:").append(gap);
+        }
+        sendMacro(m.toString());
+    }
+
+    private void runQuickAdd(String activateKey) {
+        String code = currentBarcode();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        int wait = readInt(quickDelayMs, 2500, 0, 10000);
+        int count = readInt(quickTabCount, 1, 0, 30);
+        int gap = readInt(quickTabGapMs, 700, 100, 3000);
+
+        StringBuilder m = new StringBuilder();
+        m.append("CLEAR,WAIT:300,TEXT:").append(code)
+                .append(",WAIT:").append(wait)
+                .append(",ENTER,WAIT:1000");
+        for (int i = 0; i < count; i++) {
+            m.append(",TAB,WAIT:").append(gap);
+        }
+        m.append(",").append(activateKey);
+        sendMacro(m.toString());
+    }
+
+    private void refreshHistory() {
+        if (historyView == null) return;
+        String h = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("status_history", "");
+        if (h == null || h.trim().isEmpty()) {
+            historyView.setText("操作履歴：まだありません");
+            return;
+        }
+        String[] lines = h.split("\\n");
+        StringBuilder out = new StringBuilder("操作履歴（新しい順）\n");
+        for (int i = lines.length - 1; i >= 0; i--) {
+            String line = lines[i];
+            int sep = line.indexOf(" | ");
+            out.append("・").append(sep >= 0 ? line.substring(sep + 3) : line).append("\n");
+        }
+        historyView.setText(out.toString().trim());
+    }
+
     private void sendBarcodeOnly() {
         String code = testBarcode == null ? "" : testBarcode.getText().toString().trim();
         if (code.isEmpty()) {
@@ -440,6 +570,7 @@ public class MainActivity extends Activity {
                 if (!BridgeService.ACTION_STATUS.equals(intent.getAction())) return;
                 String s = intent.getStringExtra(BridgeService.EXTRA_STATUS);
                 if (s != null) status.setText(s);
+                refreshHistory();
             }
         };
         IntentFilter f = new IntentFilter(BridgeService.ACTION_STATUS);
