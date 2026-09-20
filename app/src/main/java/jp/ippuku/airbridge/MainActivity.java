@@ -123,8 +123,66 @@ public class MainActivity extends Activity {
         btSettings.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         body.addView(btSettings);
 
+        TextView simpleTitle = new TextView(this);
+        simpleTitle.setText("かんたんテスト");
+        simpleTitle.setTextSize(22);
+        simpleTitle.setPadding(0, dp(20), 0, dp(8));
+        body.addView(simpleTitle);
+
+        TextView simpleHelp = new TextView(this);
+        simpleHelp.setText("基本はこの4ボタンだけ使えばOKです。");
+        simpleHelp.setPadding(0, 0, 0, dp(8));
+        body.addView(simpleHelp);
+
+        Button quickSearch = new Button(this);
+        quickSearch.setText("① 商品候補を表示");
+        quickSearch.setTextSize(18);
+        quickSearch.setMinHeight(dp(56));
+        quickSearch.setOnClickListener(v ->
+                sendMacro("CLEAR,WAIT:300,TEXT:4944496690023,WAIT:2500,ENTER"));
+        body.addView(quickSearch);
+
+        LinearLayout simpleRow = new LinearLayout(this);
+        simpleRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button quickPrev = new Button(this);
+        quickPrev.setText("← 戻る");
+        quickPrev.setTextSize(17);
+        quickPrev.setOnClickListener(v -> sendKey("SHIFT_TAB"));
+        simpleRow.addView(quickPrev, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button quickNext = new Button(this);
+        quickNext.setText("② 次へ");
+        quickNext.setTextSize(17);
+        quickNext.setOnClickListener(v -> sendKey("TAB"));
+        simpleRow.addView(quickNext, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button quickSelect = new Button(this);
+        quickSelect.setText("③ 決定");
+        quickSelect.setTextSize(17);
+        quickSelect.setOnClickListener(v -> sendKey("SPACE"));
+        simpleRow.addView(quickSelect, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(simpleRow);
+
+        Button quickReset = new Button(this);
+        quickReset.setText("やり直す（検索欄を空にする）");
+        quickReset.setOnClickListener(v -> sendMacro("CLEAR"));
+        body.addView(quickReset);
+
+        Button autoFocusWalk = new Button(this);
+        autoFocusWalk.setText("フォーカスをゆっくり10個進める");
+        autoFocusWalk.setOnClickListener(v ->
+                sendMacro("TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB,WAIT:700,TAB"));
+        body.addView(autoFocusWalk);
+
+        TextView advancedHint = new TextView(this);
+        advancedHint.setText("↓ ここから下は必要な時だけ使う詳細テスト");
+        advancedHint.setPadding(0, dp(18), 0, dp(4));
+        body.addView(advancedHint);
+
         TextView diagTitle = new TextView(this);
-        diagTitle.setText("テスト操作（開発用）");
+        diagTitle.setText("詳細テスト（必要な時だけ）");
         diagTitle.setTextSize(20);
         diagTitle.setPadding(0, dp(20), 0, dp(8));
         body.addView(diagTitle);
