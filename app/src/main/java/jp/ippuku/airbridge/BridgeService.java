@@ -31,8 +31,10 @@ public class BridgeService extends Service {
     public static final String EXTRA_STATUS = "status";
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
     public static final String ACTION_SEND_BARCODE = "jp.ippuku.airbridge.SEND_BARCODE";
+    public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
+    public static final String EXTRA_KEY = "key";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
@@ -165,6 +167,9 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_BARCODE.equals(action)) {
                 String code = intent.getStringExtra(EXTRA_CODE);
                 if (code != null && !code.trim().isEmpty()) enqueueBarcode(code.trim());
+            } else if (ACTION_SEND_KEY.equals(action)) {
+                String key = intent.getStringExtra(EXTRA_KEY);
+                if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
             }
         }
         return START_STICKY;
@@ -335,6 +340,33 @@ public class BridgeService extends Service {
         // Do not type into Airレジ automatically. This flag is only cleared here;
         // actual order traffic will come from the Cloudflare queue in the next step.
         p.edit().putBoolean("one_time_test_pending", false).apply();
+    }
+
+    private void sendDiagnosticKey(String key) {
+        if (!connected || target == null || hid == null) {
+            publish("キー送信不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                byte code;
+                switch (key) {
+                    case "ENTER": code = 0x28; break;
+                    case "TAB": code = 0x2B; break;
+                    case "DOWN": code = 0x51; break;
+                    case "UP": code = 0x52; break;
+                    case "ESC": code = 0x29; break;
+                    case "SPACE": code = 0x2C; break;
+                    default:
+                        publish("未対応キー: " + key);
+                        return;
+                }
+                press(code);
+                publish("診断キー送信: " + key);
+            } catch (Exception e) {
+                publish("診断キー送信失敗: " + key);
+            }
+        });
     }
 
     private void typeBarcode(String code) throws Exception {
