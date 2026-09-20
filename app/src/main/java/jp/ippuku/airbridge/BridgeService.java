@@ -45,29 +45,17 @@ public class BridgeService extends Service {
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
-    // Composite HID descriptor: Report ID 1 = keyboard, Report ID 2 = relative mouse.
-    // This lets the dedicated order iPad receive barcode keystrokes and a pointer click
-    // without touching Airレジ private APIs.
+    // Known-good keyboard-only HID descriptor.
+    // This is the same input shape that successfully typed/searches barcodes in Airレジ.
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
-            // Keyboard
-            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,(byte)0x85,0x01,
+            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,
             0x05,0x07,0x19,(byte)0xE0,0x29,(byte)0xE7,
             0x15,0x00,0x25,0x01,0x75,0x01,(byte)0x95,0x08,(byte)0x81,0x02,
             (byte)0x95,0x01,0x75,0x08,(byte)0x81,0x01,
             (byte)0x95,0x05,0x75,0x01,0x05,0x08,0x19,0x01,0x29,0x05,
             (byte)0x91,0x02,(byte)0x95,0x01,0x75,0x03,(byte)0x91,0x01,
             (byte)0x95,0x06,0x75,0x08,0x15,0x00,0x25,0x65,0x05,0x07,
-            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0,
-
-            // Mouse: buttons + X/Y relative movement
-            0x05,0x01,0x09,0x02,(byte)0xA1,0x01,(byte)0x85,0x02,
-            0x09,0x01,(byte)0xA1,0x00,
-            0x05,0x09,0x19,0x01,0x29,0x03,0x15,0x00,0x25,0x01,
-            (byte)0x95,0x03,0x75,0x01,(byte)0x81,0x02,
-            (byte)0x95,0x01,0x75,0x05,(byte)0x81,0x01,
-            0x05,0x01,0x09,0x30,0x09,0x31,0x09,0x38,0x15,(byte)0x81,0x25,0x7F,
-            0x75,0x08,(byte)0x95,0x03,(byte)0x81,0x06,
-            (byte)0xC0,(byte)0xC0
+            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0
     };
 
     private BluetoothAdapter adapter;
@@ -187,10 +175,8 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_KEY.equals(action)) {
                 String key = intent.getStringExtra(EXTRA_KEY);
                 if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
-            } else if (ACTION_MOUSE_MOVE.equals(action)) {
-                moveMouse(intent.getIntExtra(EXTRA_DX, 0), intent.getIntExtra(EXTRA_DY, 0));
-            } else if (ACTION_MOUSE_CLICK.equals(action)) {
-                clickMouse();
+            } else if (ACTION_MOUSE_MOVE.equals(action) || ACTION_MOUSE_CLICK.equals(action)) {
+                publish("マウス機能は停止中。Airレジ検索の安定動作を優先しています。");
             }
         }
         return START_STICKY;
@@ -244,7 +230,7 @@ public class BridgeService extends Service {
                 "いっぷく Air Bridge",
                 "Barcode Scanner",
                 "ippuku",
-                BluetoothHidDevice.SUBCLASS1_COMBO,
+                BluetoothHidDevice.SUBCLASS1_KEYBOARD,
                 REPORT_DESCRIPTOR
         );
 
@@ -514,9 +500,9 @@ public class BridgeService extends Service {
         down[2] = keyCode;
         byte[] up = new byte[8];
 
-        if (!hid.sendReport(target, 1, down)) throw new IllegalStateException("key down failed");
+        if (!hid.sendReport(target, 0, down)) throw new IllegalStateException("key down failed");
         Thread.sleep(28);
-        if (!hid.sendReport(target, 1, up)) throw new IllegalStateException("key up failed");
+        if (!hid.sendReport(target, 0, up)) throw new IllegalStateException("key up failed");
         Thread.sleep(28);
     }
 
