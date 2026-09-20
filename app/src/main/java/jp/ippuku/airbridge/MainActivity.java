@@ -71,7 +71,30 @@ public class MainActivity extends Activity {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         String last = p.getString("last_status", "Bluetooth待機中…");
         status.setText(last);
+        restoreTestSettings();
         refreshHistory();
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        saveTestSettings();
+    }
+
+    private void saveTestSettings() {
+        SharedPreferences.Editor e = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
+        if (testBarcode != null) e.putString("test_barcode", testBarcode.getText().toString());
+        if (quickDelayMs != null) e.putString("test_delay", quickDelayMs.getText().toString());
+        if (quickTabCount != null) e.putString("test_tab_count", quickTabCount.getText().toString());
+        if (quickTabGapMs != null) e.putString("test_tab_gap", quickTabGapMs.getText().toString());
+        e.apply();
+    }
+
+    private void restoreTestSettings() {
+        SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (testBarcode != null) testBarcode.setText(p.getString("test_barcode", "4944496690023"));
+        if (quickDelayMs != null) quickDelayMs.setText(p.getString("test_delay", "3000"));
+        if (quickTabCount != null) quickTabCount.setText(p.getString("test_tab_count", "1"));
+        if (quickTabGapMs != null) quickTabGapMs.setText(p.getString("test_tab_gap", "700"));
     }
 
     @Override protected void onDestroy() {
@@ -139,6 +162,13 @@ public class MainActivity extends Activity {
         simpleHelp.setPadding(0, 0, 0, dp(8));
         body.addView(simpleHelp);
 
+        testBarcode = new EditText(this);
+        testBarcode.setSingleLine(true);
+        testBarcode.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        testBarcode.setText("4944496690023");
+        testBarcode.setHint("テスト用バーコード");
+        body.addView(testBarcode);
+
         LinearLayout quickSettings = new LinearLayout(this);
         quickSettings.setOrientation(LinearLayout.HORIZONTAL);
 
@@ -171,6 +201,18 @@ public class MainActivity extends Activity {
         quickSearch.setMinHeight(dp(56));
         quickSearch.setOnClickListener(v -> runQuickSearch());
         body.addView(quickSearch);
+
+        Button oneShotDiag = new Button(this);
+        oneShotDiag.setText("一発診断（約20秒・決定しない）");
+        oneShotDiag.setTextSize(18);
+        oneShotDiag.setMinHeight(dp(60));
+        oneShotDiag.setOnClickListener(v -> runOneShotDiagnostic());
+        body.addView(oneShotDiag);
+
+        TextView oneShotHelp = new TextView(this);
+        oneShotHelp.setText("検索→2秒待機→Tabを1秒ごとに12回。Space/Enterは押さないので、商品追加や会計操作はしません。iPadを画面録画してこのボタンを1回押せば、フォーカス経路をまとめて確認できます。");
+        oneShotHelp.setPadding(0, 0, 0, dp(10));
+        body.addView(oneShotHelp);
 
         LinearLayout simpleRow = new LinearLayout(this);
         simpleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -247,13 +289,6 @@ public class MainActivity extends Activity {
         diagHelp.setText("Termux不要。ここからAirレジへのキー送信を確認できます。最終運用ではこの操作は使いません。");
         diagHelp.setPadding(0, 0, 0, dp(8));
         body.addView(diagHelp);
-
-        testBarcode = new EditText(this);
-        testBarcode.setSingleLine(true);
-        testBarcode.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        testBarcode.setText("4944496690023");
-        testBarcode.setHint("テスト用バーコード");
-        body.addView(testBarcode);
 
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
@@ -450,6 +485,25 @@ public class MainActivity extends Activity {
 
     private String currentBarcode() {
         return testBarcode == null ? "" : testBarcode.getText().toString().trim();
+    }
+
+    private void runOneShotDiagnostic() {
+        String code = currentBarcode();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        int wait = readInt(quickDelayMs, 3000, 1000, 10000);
+        StringBuilder m = new StringBuilder();
+        m.append("CLEAR,WAIT:500,TEXT:").append(code)
+                .append(",WAIT:").append(wait)
+                .append(",ENTER,WAIT:2000");
+        for (int i = 0; i < 12; i++) {
+            m.append(",TAB");
+            if (i < 11) m.append(",WAIT:1000");
+        }
+        sendMacro(m.toString());
+        toast("一発診断を開始しました。iPad画面をそのまま見てください。");
     }
 
     private void runQuickSearch() {
