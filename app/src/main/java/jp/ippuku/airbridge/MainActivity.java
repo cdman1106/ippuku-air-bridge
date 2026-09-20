@@ -45,15 +45,22 @@ public class MainActivity extends Activity {
         buildUi();
 
         adapter = BluetoothAdapter.getDefaultAdapter();
-        requestPermissionsIfNeeded();
-        startBridgeService();
         registerStatusReceiver();
-        refreshBondedDevices();
+        if (hasBluetoothPermissions()) {
+            startBridgeService();
+            refreshBondedDevices();
+        } else {
+            status.setText("Bluetooth権限を許可してください。");
+            requestPermissionsIfNeeded();
+        }
     }
 
     @Override protected void onResume() {
         super.onResume();
-        refreshBondedDevices();
+        if (hasBluetoothPermissions()) {
+            startBridgeService();
+            refreshBondedDevices();
+        }
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         String last = p.getString("last_status", "Bluetooth待機中…");
         status.setText(last);
@@ -241,8 +248,13 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == REQ_BT) {
-            startBridgeService();
-            refreshBondedDevices();
+            if (hasBluetoothPermissions()) {
+                status.setText("Bluetooth権限OK。接続サービスを開始します…");
+                startBridgeService();
+                refreshBondedDevices();
+            } else {
+                status.setText("Bluetooth権限が未許可です。Galaxyの 設定 > アプリ > いっぷく Air Bridge > 権限 で「付近のデバイス」を許可してください。");
+            }
         }
     }
 
