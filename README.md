@@ -1,16 +1,21 @@
 # いっぷく Air Bridge
 
-Android端末をBluetooth HIDキーボードとしてiPadへ接続し、Airレジの商品検索欄へ「商品バーコード番号 + Enter」を送る実機検証アプリです。
+2Fのモバイルオーダーを、注文専用iPadのAirレジへ自動入力するためのAndroidブリッジです。
 
-## テスト手順
+## v0.2.0
 
-1. Airレジの商品にバーコード番号（例: `100001`）を登録
-2. GitHub Actionsで生成されたDebug APKをAndroid端末へインストール
-3. アプリでBluetooth HIDを開始し、iPadからペアリング
-4. Airレジの注文入力画面で商品検索欄を選択
-5. Air Bridgeから `100001` を送信
-6. 対象商品がAirレジ伝票へ追加されるか確認
+Bluetooth Classic HID（BluetoothHidDevice）方式へ変更しました。
 
-複数コードは1行1コードで入力して連続送信できます。
+- GalaxyをBluetoothバーコード入力デバイスとしてiPadへ直接接続
+- 注文専用iPadを一度設定すれば自動再接続
+- Foreground Serviceでバックグラウンド常駐
+- 端末再起動後も自動起動
+- 切断時は5秒後に自動再接続
+- 運用用の「手動送信」ボタンは無し
+- バーコード送信キューを実装済み
 
-> Airレジの非公開APIにはアクセスしません。Bluetooth HIDキーボード入力のみを使う検証用プロジェクトです。
+次の段階でCloudflareのモバイルオーダーキューを接続し、
+注文受信 → 商品バーコード自動入力 → Airレジ伝票の一時保存
+まで無人化します。
+
+> Airレジの非公開APIは使用しません。2台目iPadを注文専用端末として使う前提です。
