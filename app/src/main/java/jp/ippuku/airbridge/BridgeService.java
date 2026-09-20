@@ -19,6 +19,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -27,6 +28,8 @@ import java.util.concurrent.Executors;
 
 public class BridgeService extends Service {
 
+    private static final String TAG = "IppukuAirBridge";
+
     public static final String ACTION_STATUS = "jp.ippuku.airbridge.STATUS";
     public static final String EXTRA_STATUS = "status";
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
@@ -34,11 +37,13 @@ public class BridgeService extends Service {
     public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
     public static final String ACTION_SEND_KEY_SEQUENCE = "jp.ippuku.airbridge.SEND_KEY_SEQUENCE";
     public static final String ACTION_SEND_BARCODE_ONLY = "jp.ippuku.airbridge.SEND_BARCODE_ONLY";
+    public static final String ACTION_SEND_MACRO = "jp.ippuku.airbridge.SEND_MACRO";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
     public static final String EXTRA_SEQUENCE = "sequence";
     public static final String EXTRA_GAP_MS = "gap_ms";
+    public static final String EXTRA_MACRO = "macro";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
@@ -181,6 +186,9 @@ public class BridgeService extends Service {
                 String sequence = intent.getStringExtra(EXTRA_SEQUENCE);
                 int gapMs = Math.max(100, intent.getIntExtra(EXTRA_GAP_MS, 350));
                 if (sequence != null) sendDiagnosticSequence(sequence, gapMs);
+            } else if (ACTION_SEND_MACRO.equals(action)) {
+                String macro = intent.getStringExtra(EXTRA_MACRO);
+                if (macro != null && !macro.trim().isEmpty()) sendMacro(macro.trim());
             }
         }
         return START_STICKY;
@@ -400,7 +408,100 @@ public class BridgeService extends Service {
             case "RIGHT": press((byte)0x4F); break;
             case "ESC": press((byte)0x29); break;
             case "SPACE": press((byte)0x2C); break;
-            default: throw new IllegalArgumentException("unsupported key");
+            case "BACKSPACE": press((byte)0x2A); break;
+            case "DELETE": press((byte)0x4C); break;
+            case "HOME": press((byte)0x4A); break;
+            case "END": press((byte)0x4D); break;
+            case "CMD_A": press((byte)0x08, (byte)0x04); break;
+            case "CTRL_A": press((byte)0x01, (byte)0x04); break;
+            default: throw new IllegalArgumentException("unsupported key: " + key);
+        }
+    }
+
+    private void sendMacro(String macro) {
+        if (!connected || target == null || hid == null) {
+            publish("マクロ送信不可：iPad未接続");
+            return;
+        }
+        sender.execute(() -> {
+            boolean sentAny = false;
+            try {
+                String[] tokens = macro.split(",");
+                Log.i(TAG, "MACRO start: " + macro);
+                for (String raw : tokens) {
+                    String token = raw.trim();
+                    if (token.isEmpty()) continue;
+
+                    if (token.toUpperCase().startsWith("WAIT:")) {
+                        int ms = Integer.parseInt(token.substring(5).trim());
+                        ms = Math.max(0, Math.min(10000, ms));
+                        Log.i(TAG, "MACRO wait " + ms + "ms");
+                        Thread.sleep(ms);
+                        continue;
+                    }
+
+                    if (token.toUpperCase().startsWith("TEXT:")) {
+                        String text = token.substring(5);
+                        Log.i(TAG, "MACRO text len=" + text.length());
+                        typeAscii(text);
+                        sentAny = true;
+                        continue;
+                    }
+
+                    if ("CLEAR".equalsIgnoreCase(token)) {
+                        Log.i(TAG, "MACRO clear field");
+                        sendNamedKey("CMD_A");
+                        Thread.sleep(120);
+                        sendNamedKey("BACKSPACE");
+                        sentAny = true;
+                        continue;
+                    }
+
+                    String key = token.toUpperCase();
+                    int repeat = 1;
+                    int star = key.lastIndexOf('*');
+                    if (star > 0) {
+                        repeat = Integer.parseInt(key.substring(star + 1));
+                        repeat = Math.max(1, Math.min(50, repeat));
+                        key = key.substring(0, star);
+                    }
+                    for (int i = 0; i < repeat; i++) {
+                        Log.i(TAG, "MACRO key " + key + " " + (i + 1) + "/" + repeat);
+                        sendNamedKey(key);
+                        sentAny = true;
+                        if (repeat > 1) Thread.sleep(500);
+                    }
+                }
+                publish("マクロ送信完了");
+                Log.i(TAG, "MACRO complete sentAny=" + sentAny);
+            } catch (Exception e) {
+                Log.e(TAG, "MACRO failed afterOutput=" + sentAny + " macro=" + macro, e);
+                publish("マクロ送信失敗" + (sentAny ? "（途中まで送信済み）" : ""));
+            }
+        });
+    }
+
+    private void typeAscii(String text) throws Exception {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '0' && c <= '9') {
+                press(keyForDigit(c).code);
+            } else if (c >= 'a' && c <= 'z') {
+                press((byte)(0x04 + (c - 'a')));
+            } else if (c >= 'A' && c <= 'Z') {
+                press((byte)0x02, (byte)(0x04 + (c - 'A')));
+            } else if (c == ' ') {
+                press((byte)0x2C);
+            } else if (c == '-') {
+                press((byte)0x2D);
+            } else if (c == '.') {
+                press((byte)0x37);
+            } else if (c == '/') {
+                press((byte)0x38);
+            } else {
+                throw new IllegalArgumentException("unsupported TEXT char: " + c);
+            }
+            Thread.sleep(35);
         }
     }
 
@@ -426,13 +527,10 @@ public class BridgeService extends Service {
     private void typeBarcode(String code) throws Exception {
         typeDigits(code);
 
-        // Airレジの検索欄は文字入力直後のReturnを取りこぼすことがある。
-        // 実機で「数字入力後、少し待ってReturn」なら確実に検索できたため、
-        // 固定2秒待機＋Return再送で検索結果表示を安定させる。
-        Thread.sleep(2000);
+        // 実機では、文字入力直後のReturnはAirレジ側で取りこぼすことがある。
+        // 十分な待機後にReturnを1回だけ送り、後続操作と混同しないようにする。
+        Thread.sleep(2500);
         press((byte)0x28); // Enter / Return
-        Thread.sleep(800);
-        press((byte)0x28); // harmless retry while search field remains focused
     }
 
     private void typeDigits(String code) throws Exception {
@@ -475,6 +573,7 @@ public class BridgeService extends Service {
     }
 
     private void publish(String text) {
+        Log.i(TAG, text);
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("last_status", text).apply();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification(text));
