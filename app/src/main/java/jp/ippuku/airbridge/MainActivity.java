@@ -214,6 +214,51 @@ public class MainActivity extends Activity {
         oneShotHelp.setPadding(0, 0, 0, dp(10));
         body.addView(oneShotHelp);
 
+        TextView mouseKeysTitle = new TextView(this);
+        mouseKeysTitle.setText("マウスキーテスト（予備ルート）");
+        mouseKeysTitle.setTextSize(18);
+        mouseKeysTitle.setPadding(0, dp(12), 0, dp(4));
+        body.addView(mouseKeysTitle);
+
+        TextView mouseKeysHelp = new TextView(this);
+        mouseKeysHelp.setText("iPadで 設定 → アクセシビリティ → タッチ → AssistiveTouch → マウスキー をONにした時だけ使います。Bluetoothマウス化せず、今のキーボード接続のままポインター操作を試せます。");
+        mouseKeysHelp.setPadding(0, 0, 0, dp(6));
+        body.addView(mouseKeysHelp);
+
+        LinearLayout mkRow1 = new LinearLayout(this);
+        mkRow1.setOrientation(LinearLayout.HORIZONTAL);
+        Button mkUp = new Button(this);
+        mkUp.setText("↑");
+        mkUp.setOnClickListener(v -> sendKey("KP8"));
+        mkRow1.addView(mkUp, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button mkClick = new Button(this);
+        mkClick.setText("クリック");
+        mkClick.setOnClickListener(v -> sendKey("KP5"));
+        mkRow1.addView(mkClick, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        body.addView(mkRow1);
+
+        LinearLayout mkRow2 = new LinearLayout(this);
+        mkRow2.setOrientation(LinearLayout.HORIZONTAL);
+        Button mkLeft = new Button(this);
+        mkLeft.setText("←");
+        mkLeft.setOnClickListener(v -> sendKey("KP4"));
+        mkRow2.addView(mkLeft, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button mkDown = new Button(this);
+        mkDown.setText("↓");
+        mkDown.setOnClickListener(v -> sendKey("KP2"));
+        mkRow2.addView(mkDown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button mkRight = new Button(this);
+        mkRight.setText("→");
+        mkRight.setOnClickListener(v -> sendKey("KP6"));
+        mkRow2.addView(mkRight, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        body.addView(mkRow2);
+
+        Button mkHome = new Button(this);
+        mkHome.setText("ポインターを左上方向へ寄せる");
+        mkHome.setOnClickListener(v ->
+                sendMacro("KP7*20,WAIT:300,KP7*20"));
+        body.addView(mkHome);
+
         LinearLayout simpleRow = new LinearLayout(this);
         simpleRow.setOrientation(LinearLayout.HORIZONTAL);
 
