@@ -4,30 +4,37 @@ import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothHidDevice;
-import android.bluetooth.BluetoothHidDeviceAppSdpSettings;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattServer;
+import android.bluetooth.BluetoothGattServerCallback;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.BluetoothStatusCodes;
+import android.bluetooth.le.AdvertiseCallback;
+import android.bluetooth.le.AdvertiseData;
+import android.bluetooth.le.AdvertiseSettings;
+import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.ParcelUuid;
 import android.text.InputType;
 import android.view.Gravity;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -36,26 +43,19 @@ public class MainActivity extends Activity {
     private static final int REQ_BT = 1001;
     private static final int DEFAULT_INTERVAL = 700;
 
-    private BluetoothAdapter adapter;
-    private BluetoothHidDevice hid;
-    private BluetoothDevice host;
-    private boolean registered;
+    private static final UUID HID_SERVICE = uuid16(0x1812);
+    private static final UUID HID_INFO = uuid16(0x2A4A);
+    private static final UUID REPORT_MAP = uuid16(0x2A4B);
+    private static final UUID HID_CONTROL_POINT = uuid16(0x2A4C);
+    private static final UUID REPORT = uuid16(0x2A4D);
+    private static final UUID PROTOCOL_MODE = uuid16(0x2A4E);
+    private static final UUID BOOT_KEYBOARD_INPUT = uuid16(0x2A22);
+    private static final UUID CCCD = uuid16(0x2902);
+    private static final UUID REPORT_REFERENCE = uuid16(0x2908);
 
-    private final List<BluetoothDevice> paired = new ArrayList<>();
-    private final ExecutorService sender = Executors.newSingleThreadExecutor();
-
-    private TextView status;
-    private Spinner hosts;
-    private EditText oneCode;
-    private EditText batchCodes;
-    private EditText interval;
-    private Button connect;
-    private Button sendOne;
-    private Button sendBatch;
-
-    private static final byte[] KEYBOARD_DESCRIPTOR = new byte[] {
-            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,0x05,0x07,
-            0x19,(byte)0xE0,0x29,(byte)0xE7,0x15,0x00,0x25,0x01,
+    private static final byte[] KEYBOARD_REPORT_MAP = new byte[] {
+            0x05,0x01,0x09,0x06,(byte)0xA1,0x01,(byte)0x85,0x01,
+            0x05,0x07,0x19,(byte)0xE0,0x29,(byte)0xE7,0x15,0x00,0x25,0x01,
             0x75,0x01,(byte)0x95,0x08,(byte)0x81,0x02,
             (byte)0x95,0x01,0x75,0x08,(byte)0x81,0x01,
             (byte)0x95,0x05,0x75,0x01,0x05,0x08,0x19,0x01,0x29,0x05,
@@ -64,49 +64,101 @@ public class MainActivity extends Activity {
             0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0
     };
 
-    private final BluetoothProfile.ServiceListener profileListener =
-            new BluetoothProfile.ServiceListener() {
-                @Override public void onServiceConnected(int profile, BluetoothProfile proxy) {
-                    if (profile != BluetoothProfile.HID_DEVICE) return;
-                    hid = (BluetoothHidDevice) proxy;
-                    setStatus("Bluetooth HID準備完了。HID登録中…");
-                    registerHid();
-                }
+    private BluetoothAdapter adapter;
+    private BluetoothLeAdvertiser advertiser;
+    private BluetoothGattServer gattServer;
+    private BluetoothGattCharacteristic inputReport;
+    private BluetoothGattCharacteristic bootInputReport;
+    private BluetoothDevice host;
+    private boolean notificationsEnabled;
+    private boolean advertising;
 
-                @Override public void onServiceDisconnected(int profile) {
-                    if (profile == BluetoothProfile.HID_DEVICE) {
-                        hid = null;
-                        registered = false;
-                        setStatus("Bluetooth HIDサービスが切断されました。");
-                        updateButtons();
-                    }
-                }
-            };
+    private final ExecutorService sender = Executors.newSingleThreadExecutor();
 
-    private final BluetoothHidDevice.Callback hidCallback = new BluetoothHidDevice.Callback() {
-        @Override public void onAppStatusChanged(BluetoothDevice pluggedDevice, boolean isRegistered) {
-            registered = isRegistered;
-            runOnUiThread(() -> {
-                setStatus(isRegistered
-                        ? "HIDキーボード登録済み。iPadのBluetooth設定からこのAndroid端末をペアリングしてください。"
-                        : "HID登録失敗。このAndroid端末がBluetooth HID Deviceに非対応の可能性があります。");
-                refreshPaired();
-                updateButtons();
-            });
+    private TextView status;
+    private EditText oneCode;
+    private EditText batchCodes;
+    private EditText interval;
+    private Button startBle;
+    private Button testTyping;
+    private Button sendOne;
+    private Button sendBatch;
+
+    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
+        @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+            advertising = true;
+            setStatus("BLEキーボード待機中。iPadの 設定 > Bluetooth でこのAndroid端末を選んでください。");
+            updateButtons();
         }
 
-        @Override public void onConnectionStateChanged(BluetoothDevice device, int state) {
-            runOnUiThread(() -> {
-                if (state == BluetoothProfile.STATE_CONNECTED) {
-                    host = device;
-                    setStatus("接続済み: " + nameOf(device) + "。Airレジの検索欄を選択して送信できます。");
-                } else if (state == BluetoothProfile.STATE_CONNECTING) {
-                    setStatus("接続中: " + nameOf(device));
-                } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
-                    setStatus("切断: " + nameOf(device));
+        @Override public void onStartFailure(int errorCode) {
+            advertising = false;
+            setStatus("BLE広告開始失敗: " + errorCode + "。この端末がBLE周辺機器モードに非対応の可能性があります。");
+            updateButtons();
+        }
+    };
+
+    private final BluetoothGattServerCallback gattCallback = new BluetoothGattServerCallback() {
+        @Override public void onConnectionStateChange(BluetoothDevice device, int statusCode, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                host = device;
+                notificationsEnabled = false;
+                setStatus("iPad接続済み。キーボード通知の準備待ち…");
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (host != null && host.getAddress().equals(device.getAddress())) host = null;
+                notificationsEnabled = false;
+                setStatus("iPad切断。Bluetooth設定から再接続してください。");
+            }
+            updateButtons();
+        }
+
+        @Override public void onCharacteristicReadRequest(BluetoothDevice device, int requestId,
+                                                           int offset, BluetoothGattCharacteristic characteristic) {
+            byte[] value = characteristic.getValue();
+            if (value == null) value = new byte[0];
+            if (offset > value.length) {
+                gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null);
+                return;
+            }
+            byte[] slice = new byte[value.length - offset];
+            System.arraycopy(value, offset, slice, 0, slice.length);
+            gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice);
+        }
+
+        @Override public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId,
+                                                            BluetoothGattCharacteristic characteristic,
+                                                            boolean preparedWrite, boolean responseNeeded,
+                                                            int offset, byte[] value) {
+            if (value != null) characteristic.setValue(value);
+            if (responseNeeded) {
+                gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null);
+            }
+        }
+
+        @Override public void onDescriptorReadRequest(BluetoothDevice device, int requestId,
+                                                       int offset, BluetoothGattDescriptor descriptor) {
+            byte[] value = descriptor.getValue();
+            if (value == null) value = new byte[0];
+            gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+        }
+
+        @Override public void onDescriptorWriteRequest(BluetoothDevice device, int requestId,
+                                                        BluetoothGattDescriptor descriptor,
+                                                        boolean preparedWrite, boolean responseNeeded,
+                                                        int offset, byte[] value) {
+            descriptor.setValue(value);
+            if (CCCD.equals(descriptor.getUuid())) {
+                notificationsEnabled = value != null && value.length >= 2 &&
+                        value[0] == BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE[0] &&
+                        value[1] == BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE[1];
+                if (notificationsEnabled) {
+                    setStatus("iPad接続完了。TEST123を送れます。");
                 }
                 updateButtons();
-            });
+            }
+            if (responseNeeded) {
+                gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null);
+            }
         }
     };
 
@@ -128,23 +180,17 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         super.onDestroy();
         sender.shutdownNow();
-        if (adapter != null && hid != null && hasConnect()) {
-            try {
-                if (registered) hid.unregisterApp();
-                adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid);
-            } catch (Exception ignored) {}
-        }
+        stopBle();
     }
 
     private void buildUi() {
         int p = dp(16);
-
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(p,p,p,p);
 
         TextView title = new TextView(this);
-        title.setText("いっぷく Air Bridge");
+        title.setText("いっぷく Air Bridge BLE");
         title.setTextSize(25);
         title.setGravity(Gravity.CENTER);
         body.addView(title);
@@ -154,54 +200,14 @@ public class MainActivity extends Activity {
         status.setPadding(0,p,0,p);
         body.addView(status);
 
-        Button discover = new Button(this);
-        discover.setText("iPadから検索できるようにする");
-        discover.setOnClickListener(v -> requestDiscoverable());
-        body.addView(discover);
+        startBle = new Button(this);
+        startBle.setText("BLEキーボードを開始");
+        startBle.setOnClickListener(v -> startBleKeyboard());
+        body.addView(startBle);
 
-        Button refresh = new Button(this);
-        refresh.setText("ペア済み端末を更新");
-        refresh.setOnClickListener(v -> refreshPaired());
-        body.addView(refresh);
-
-        hosts = new Spinner(this);
-        hosts.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"ペア済み端末なし"}));
-        hosts.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(android.widget.AdapterView<?> parent,
-                                                 android.view.View view, int position, long id) {
-                host = position < paired.size() ? paired.get(position) : null;
-                updateButtons();
-            }
-            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {
-                host = null;
-                updateButtons();
-            }
-        });
-        body.addView(hosts);
-
-        connect = new Button(this);
-        connect.setText("選択したiPadへ接続");
-        connect.setOnClickListener(v -> connectHost());
-        body.addView(connect);
-
-        Button testTyping = new Button(this);
+        testTyping = new Button(this);
         testTyping.setText("接続テスト：iPadへ TEST123 を送信");
-        testTyping.setOnClickListener(v -> {
-            if (!isHostConnected()) {
-                toast("まだiPadとHID接続できていません。画面上部の状態を確認してください。");
-                return;
-            }
-            sender.execute(() -> {
-                try {
-                    typeText("TEST123");
-                    runOnUiThread(() -> setStatus("TEST123 を送信しました。iPadのメモ等に表示されたか確認してください。"));
-                } catch (Exception e) {
-                    runOnUiThread(() -> setStatus("テスト送信エラー: " + e.getMessage()));
-                }
-            });
-        });
+        testTyping.setOnClickListener(v -> sendTextOnly("TEST123"));
         body.addView(testTyping);
 
         TextView t1 = new TextView(this);
@@ -249,88 +255,151 @@ public class MainActivity extends Activity {
         sendBatch.setOnClickListener(v -> sendBatch());
         body.addView(sendBatch);
 
+        TextView note = new TextView(this);
+        note.setText("\n使い方: ①BLEキーボード開始 → ②iPadの設定>BluetoothでAndroid端末を選択 → ③iPadのメモを開いてTEST123送信");
+        note.setPadding(0,p,0,0);
+        body.addView(note);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(body);
         setContentView(scroll);
-
         updateButtons();
     }
 
-    private void startHidProfile() {
-        if (!hasConnect()) return;
-        try {
-            boolean ok = adapter.getProfileProxy(this, profileListener, BluetoothProfile.HID_DEVICE);
-            if (!ok) setStatus("Bluetooth HIDプロファイルを開始できませんでした。");
-        } catch (SecurityException e) {
-            setStatus("Bluetooth権限が必要です。");
-        }
-    }
-
-    private void registerHid() {
-        if (hid == null || !hasConnect()) return;
-
-        BluetoothHidDeviceAppSdpSettings sdp =
-                new BluetoothHidDeviceAppSdpSettings(
-                        "Ippuku Air Bridge",
-                        "AirRegi barcode keyboard bridge",
-                        "Ippuku",
-                        BluetoothHidDevice.SUBCLASS1_KEYBOARD,
-                        KEYBOARD_DESCRIPTOR
-                );
-
-        try {
-            boolean ok = hid.registerApp(sdp, null, null, Runnable::run, hidCallback);
-            if (!ok) setStatus("HIDアプリ登録要求を開始できませんでした。");
-        } catch (Exception e) {
-            setStatus("HID登録エラー: " + e.getMessage());
-        }
-    }
-
-    private void requestDiscoverable() {
-        if (!hasAdvertise()) {
+    private void startBleKeyboard() {
+        if (!hasBtPermissions()) {
             requestBtPermissions();
             return;
         }
-        Intent i = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-        i.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
-        startActivity(i);
-        toast("iPadの 設定 > Bluetooth から、このAndroid端末を選んでください。");
-    }
-
-    private void refreshPaired() {
-        paired.clear();
-        if (!hasConnect()) return;
-
-        try {
-            Set<BluetoothDevice> set = adapter.getBondedDevices();
-            if (set != null) paired.addAll(set);
-            paired.sort(Comparator.comparing(this::nameOf));
-
-            List<String> labels = new ArrayList<>();
-            for (BluetoothDevice d : paired) labels.add(nameOf(d));
-
-            if (labels.isEmpty()) labels.add("ペア済み端末なし");
-            hosts.setAdapter(new ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_dropdown_item, labels));
-
-            host = paired.isEmpty() ? null : paired.get(0);
-            updateButtons();
-        } catch (SecurityException e) {
-            setStatus("ペア済み端末取得にBluetooth権限が必要です。");
-        }
-    }
-
-    private void connectHost() {
-        if (hid == null || !registered || host == null || !hasConnect()) {
-            toast("先にHID登録とiPadのペアリングをしてください。");
+        if (!adapter.isEnabled()) {
+            setStatus("AndroidのBluetoothをONにしてください。");
             return;
         }
-        try {
-            setStatus("接続要求中: " + nameOf(host));
-            if (!hid.connect(host)) setStatus("接続要求を開始できませんでした。");
-        } catch (Exception e) {
-            setStatus("接続エラー: " + e.getMessage());
+
+        advertiser = adapter.getBluetoothLeAdvertiser();
+        if (advertiser == null) {
+            setStatus("このAndroid端末はBLE周辺機器モードに対応していません。");
+            return;
         }
+
+        BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        try {
+            gattServer = manager.openGattServer(this, gattCallback);
+        } catch (SecurityException e) {
+            setStatus("Bluetooth権限が必要です。");
+            return;
+        }
+        if (gattServer == null) {
+            setStatus("BLE GATTサーバーを開始できませんでした。");
+            return;
+        }
+
+        BluetoothGattService hid = new BluetoothGattService(HID_SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY);
+
+        BluetoothGattCharacteristic info = new BluetoothGattCharacteristic(
+                HID_INFO, BluetoothGattCharacteristic.PROPERTY_READ,
+                BluetoothGattCharacteristic.PERMISSION_READ);
+        info.setValue(new byte[]{0x11,0x01,0x00,0x02});
+        hid.addCharacteristic(info);
+
+        BluetoothGattCharacteristic map = new BluetoothGattCharacteristic(
+                REPORT_MAP, BluetoothGattCharacteristic.PROPERTY_READ,
+                BluetoothGattCharacteristic.PERMISSION_READ);
+        map.setValue(KEYBOARD_REPORT_MAP);
+        hid.addCharacteristic(map);
+
+        BluetoothGattCharacteristic protocol = new BluetoothGattCharacteristic(
+                PROTOCOL_MODE,
+                BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                BluetoothGattCharacteristic.PERMISSION_READ | BluetoothGattCharacteristic.PERMISSION_WRITE);
+        protocol.setValue(new byte[]{0x01});
+        hid.addCharacteristic(protocol);
+
+        BluetoothGattCharacteristic control = new BluetoothGattCharacteristic(
+                HID_CONTROL_POINT, BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                BluetoothGattCharacteristic.PERMISSION_WRITE);
+        hid.addCharacteristic(control);
+
+        inputReport = new BluetoothGattCharacteristic(
+                REPORT,
+                BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED);
+
+        BluetoothGattDescriptor cccd = new BluetoothGattDescriptor(
+                CCCD,
+                BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED | BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED);
+        cccd.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
+        inputReport.addDescriptor(cccd);
+
+        BluetoothGattDescriptor ref = new BluetoothGattDescriptor(
+                REPORT_REFERENCE, BluetoothGattDescriptor.PERMISSION_READ);
+        ref.setValue(new byte[]{0x01,0x01});
+        inputReport.addDescriptor(ref);
+        inputReport.setValue(new byte[8]);
+        hid.addCharacteristic(inputReport);
+
+        bootInputReport = new BluetoothGattCharacteristic(
+                BOOT_KEYBOARD_INPUT,
+                BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED);
+        BluetoothGattDescriptor bootCccd = new BluetoothGattDescriptor(
+                CCCD,
+                BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED | BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED);
+        bootCccd.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
+        bootInputReport.addDescriptor(bootCccd);
+        bootInputReport.setValue(new byte[8]);
+        hid.addCharacteristic(bootInputReport);
+
+        if (!gattServer.addService(hid)) {
+            setStatus("HIDサービスを追加できませんでした。");
+            return;
+        }
+
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(true)
+                .build();
+
+        AdvertiseData data = new AdvertiseData.Builder()
+                .setIncludeDeviceName(true)
+                .addServiceUuid(new ParcelUuid(HID_SERVICE))
+                .build();
+
+        try {
+            advertiser.startAdvertising(settings, data, advertiseCallback);
+            setStatus("BLE広告を開始中…");
+        } catch (SecurityException e) {
+            setStatus("BLE広告権限がありません。");
+        }
+    }
+
+    private void stopBle() {
+        try {
+            if (advertiser != null && advertising) advertiser.stopAdvertising(advertiseCallback);
+        } catch (Exception ignored) {}
+        advertising = false;
+        if (gattServer != null) {
+            try { gattServer.close(); } catch (Exception ignored) {}
+        }
+        gattServer = null;
+        host = null;
+        notificationsEnabled = false;
+    }
+
+    private void sendTextOnly(String text) {
+        if (!readyToSend()) {
+            toast("iPadがまだBLEキーボードとして接続されていません。");
+            return;
+        }
+        sender.execute(() -> {
+            try {
+                typeText(text);
+                setStatus("TEST123を送信しました。iPadのメモを確認してください。");
+            } catch (Exception e) {
+                setStatus("送信エラー: " + e.getMessage());
+            }
+        });
     }
 
     private void sendBatch() {
@@ -340,46 +409,41 @@ public class MainActivity extends Activity {
             String s = line.trim();
             if (!s.isEmpty()) codes.add(s);
         }
-
         if (codes.isEmpty()) {
             toast("1行に1つバーコード番号を入力してください。");
             return;
         }
-
         int wait = DEFAULT_INTERVAL;
         try {
             wait = Math.max(150, Integer.parseInt(interval.getText().toString().trim()));
         } catch (Exception ignored) {}
-
         sendCodes(codes, wait);
     }
 
     private void sendCodes(List<String> codes, int wait) {
-        if (!isHostConnected()) {
-            toast("iPadへBluetooth HID接続してください。上部に「接続済み」と表示されている必要があります。");
+        if (!readyToSend()) {
+            toast("iPadがまだBLEキーボードとして接続されていません。");
             return;
         }
-
         sender.execute(() -> {
             runOnUiThread(() -> {
                 sendOne.setEnabled(false);
                 sendBatch.setEnabled(false);
                 setStatus("送信中… 0/" + codes.size());
             });
-
             try {
                 int n = 0;
                 for (String code : codes) {
                     typeText(code);
-                    press((byte)0x28, (byte)0x00); // Enter
+                    press((byte)0x28, (byte)0x00);
                     n++;
                     final int done = n;
-                    runOnUiThread(() -> setStatus("送信中… " + done + "/" + codes.size()));
+                    setStatus("送信中… " + done + "/" + codes.size());
                     if (wait > 0 && n < codes.size()) Thread.sleep(wait);
                 }
-                runOnUiThread(() -> setStatus("送信完了: " + codes.size() + "件。Airレジの伝票を確認してください。"));
+                setStatus("送信完了: " + codes.size() + "件。Airレジの伝票を確認してください。");
             } catch (Exception e) {
-                runOnUiThread(() -> setStatus("送信エラー: " + e.getMessage()));
+                setStatus("送信エラー: " + e.getMessage());
             } finally {
                 runOnUiThread(this::updateButtons);
             }
@@ -401,12 +465,28 @@ public class MainActivity extends Activity {
         down[2] = code;
         byte[] up = new byte[8];
 
-        boolean a = hid.sendReport(host, 0, down);
-        Thread.sleep(30);
-        boolean b = hid.sendReport(host, 0, up);
-        Thread.sleep(30);
+        notifyReport(down);
+        Thread.sleep(35);
+        notifyReport(up);
+        Thread.sleep(35);
+    }
 
-        if (!a || !b) throw new IllegalStateException("HIDレポート送信失敗");
+    private void notifyReport(byte[] value) throws Exception {
+        if (!readyToSend()) throw new IllegalStateException("iPad未接続");
+
+        boolean ok;
+        if (Build.VERSION.SDK_INT >= 33) {
+            int result = gattServer.notifyCharacteristicChanged(host, inputReport, false, value);
+            ok = result == BluetoothStatusCodes.SUCCESS;
+        } else {
+            inputReport.setValue(value);
+            ok = gattServer.notifyCharacteristicChanged(host, inputReport, false);
+        }
+        if (!ok) throw new IllegalStateException("BLE通知送信失敗");
+    }
+
+    private boolean readyToSend() {
+        return gattServer != null && host != null && notificationsEnabled;
     }
 
     private Key keyFor(char c) {
@@ -414,7 +494,6 @@ public class MainActivity extends Activity {
         if (c == '0') return new Key((byte)0x27, (byte)0);
         if (c >= 'a' && c <= 'z') return new Key((byte)(0x04 + (c - 'a')), (byte)0);
         if (c >= 'A' && c <= 'Z') return new Key((byte)(0x04 + (c - 'A')), (byte)0x02);
-
         switch (c) {
             case '-': return new Key((byte)0x2D, (byte)0);
             case '_': return new Key((byte)0x2D, (byte)0x02);
@@ -433,63 +512,37 @@ public class MainActivity extends Activity {
                 need.add(Manifest.permission.BLUETOOTH_CONNECT);
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED)
                 need.add(Manifest.permission.BLUETOOTH_ADVERTISE);
-
             if (!need.isEmpty()) {
                 requestPermissions(need.toArray(new String[0]), REQ_BT);
                 return;
             }
         }
-        startHidProfile();
-        refreshPaired();
+        setStatus("準備完了。「BLEキーボードを開始」を押してください。");
+        updateButtons();
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == REQ_BT) {
-            startHidProfile();
-            refreshPaired();
+            setStatus(hasBtPermissions()
+                    ? "準備完了。「BLEキーボードを開始」を押してください。"
+                    : "Bluetooth権限を許可してください。");
+            updateButtons();
         }
     }
 
-    private boolean hasConnect() {
+    private boolean hasBtPermissions() {
         return Build.VERSION.SDK_INT < 31 ||
-                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private boolean hasAdvertise() {
-        return Build.VERSION.SDK_INT < 31 ||
-                checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private String nameOf(BluetoothDevice d) {
-        if (d == null) return "不明な端末";
-        try {
-            String n = hasConnect() ? d.getName() : null;
-            return (n == null || n.trim().isEmpty()) ? d.getAddress() : n + " • " + d.getAddress();
-        } catch (Exception e) {
-            return "Bluetooth端末";
-        }
-    }
-
-    private boolean isHostConnected() {
-        if (hid == null || host == null || !hasConnect()) return false;
-        try {
-            return hid.getConnectionState(host) == BluetoothProfile.STATE_CONNECTED;
-        } catch (Exception e) {
-            return false;
-        }
+                (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                 checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED);
     }
 
     private void updateButtons() {
-        if (connect == null) return;
-
-        boolean canConnect = registered && hid != null && host != null && hasConnect();
-        connect.setEnabled(canConnect);
-
-        boolean connected = canConnect && isHostConnected();
-
-        sendOne.setEnabled(connected);
-        sendBatch.setEnabled(connected);
+        if (startBle == null) return;
+        boolean ready = readyToSend();
+        testTyping.setEnabled(ready);
+        sendOne.setEnabled(ready);
+        sendBatch.setEnabled(ready);
     }
 
     private void setStatus(String s) {
@@ -497,11 +550,15 @@ public class MainActivity extends Activity {
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+        runOnUiThread(() -> Toast.makeText(this, s, Toast.LENGTH_LONG).show());
     }
 
     private int dp(int n) {
         return (int)(n * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static UUID uuid16(int shortUuid) {
+        return UUID.fromString(String.format("0000%04x-0000-1000-8000-00805f9b34fb", shortUuid));
     }
 
     private static final class Key {
