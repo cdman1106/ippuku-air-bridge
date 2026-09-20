@@ -9,6 +9,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 
 public class UsbHidDiagnosticsActivity extends Activity {
@@ -62,12 +64,31 @@ public class UsbHidDiagnosticsActivity extends Activity {
             boolean root = commandOk("su -c id");
             boolean configA = new File("/config/usb_gadget").exists();
             boolean configB = new File("/sys/kernel/config/usb_gadget").exists();
+            boolean sysKernelConfig = new File("/sys/kernel/config").exists();
             boolean udc = new File("/sys/class/udc").exists();
             boolean hidg0 = new File("/dev/hidg0").exists();
+            boolean legacyAndroidUsb = new File("/sys/class/android_usb/android0").exists();
+
+            String filesystems = readTextFile("/proc/filesystems");
+            boolean configfsSupported = filesystems != null && filesystems.contains("configfs");
+
+            String kernelConfig = readGzipText("/proc/config.gz");
+            String hidKernel = "確認不可";
+            String configfsKernel = "確認不可";
+            if (kernelConfig != null) {
+                hidKernel = configEnabled(kernelConfig, "CONFIG_USB_CONFIGFS_F_HID") ||
+                            configEnabled(kernelConfig, "CONFIG_USB_F_HID") ? "あり" : "なし";
+                configfsKernel = configEnabled(kernelConfig, "CONFIG_USB_CONFIGFS") ? "あり" : "なし";
+            }
 
             s.append("root権限: ").append(root ? "あり" : "なし").append("\n");
             s.append("/config/usb_gadget: ").append(configA ? "あり" : "なし").append("\n");
+            s.append("/sys/kernel/config: ").append(sysKernelConfig ? "あり" : "なし").append("\n");
             s.append("/sys/kernel/config/usb_gadget: ").append(configB ? "あり" : "なし").append("\n");
+            s.append("configfs対応(/proc/filesystems): ").append(configfsSupported ? "あり" : "なし").append("\n");
+            s.append("kernel USB_CONFIGFS: ").append(configfsKernel).append("\n");
+            s.append("kernel HID function: ").append(hidKernel).append("\n");
+            s.append("/sys/class/android_usb/android0: ").append(legacyAndroidUsb ? "あり" : "なし").append("\n");
             s.append("/sys/class/udc: ").append(udc ? "あり" : "なし").append("\n");
             s.append("/dev/hidg0: ").append(hidg0 ? "あり" : "なし").append("\n\n");
 
@@ -75,8 +96,10 @@ public class UsbHidDiagnosticsActivity extends Activity {
                 s.append("判定: USB HID送信を試せます。\n");
             } else if ((configA || configB) && udc && root) {
                 s.append("判定: カーネル側にUSB Gadget機能はあります。HID Gadgetの作成処理を追加すれば試せる可能性があります。\n");
+            } else if (!root && udc && (configfsSupported || sysKernelConfig || legacyAndroidUsb)) {
+                s.append("判定: USBデバイス側ハードウェアはあります。root化後にUSB Gadget/HIDを構成できる可能性があります。\n");
             } else if (!root) {
-                s.append("判定: 通常アプリの権限ではAndroidをUSBキーボード化できません。rootが必要な可能性が高いです。\n");
+                s.append("判定: 通常アプリの権限ではAndroidをUSBキーボード化できません。rootに加えてカーネル側HID対応の確認が必要です。\n");
             } else {
                 s.append("判定: この端末の現在のカーネル構成ではUSB HID化が難しい可能性があります。\n");
             }
@@ -87,6 +110,38 @@ public class UsbHidDiagnosticsActivity extends Activity {
                 sendTest.setEnabled(canSend);
             });
         }).start();
+    }
+
+    private String readTextFile(String path) {
+        try {
+            FileInputStream in = new FileInputStream(path);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0 && out.size() < 1024 * 1024) out.write(buf, 0, n);
+            in.close();
+            return out.toString("UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String readGzipText(String path) {
+        try {
+            java.util.zip.GZIPInputStream in = new java.util.zip.GZIPInputStream(new FileInputStream(path));
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0 && out.size() < 4 * 1024 * 1024) out.write(buf, 0, n);
+            in.close();
+            return out.toString("UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean configEnabled(String cfg, String key) {
+        return cfg.contains(key + "=y") || cfg.contains(key + "=m");
     }
 
     private boolean commandOk(String cmd) {
