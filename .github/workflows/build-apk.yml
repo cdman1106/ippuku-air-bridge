@@ -31,6 +31,11 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Restore stable debug signing key
+        run: |
+          mkdir -p ci
+          base64 -d ci/ippuku-debug.keystore.b64 > ci/ippuku-debug.keystore
+
       - name: Build debug APK
         run: gradle :app:assembleDebug
 
