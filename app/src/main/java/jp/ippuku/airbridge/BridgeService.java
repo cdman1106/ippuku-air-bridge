@@ -32,6 +32,7 @@ public class BridgeService extends Service {
 
     public static final String ACTION_STATUS = "jp.ippuku.airbridge.STATUS";
     public static final String EXTRA_STATUS = "status";
+    public static final String EXTRA_HISTORY = "history";
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
     public static final String ACTION_SEND_BARCODE = "jp.ippuku.airbridge.SEND_BARCODE";
     public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
@@ -574,13 +575,30 @@ public class BridgeService extends Service {
 
     private void publish(String text) {
         Log.i(TAG, text);
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("last_status", text).apply();
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String old = prefs.getString("status_history", "");
+        String line = System.currentTimeMillis() + " | " + text;
+        String history = old.isEmpty() ? line : old + "\n" + line;
+        String[] lines = history.split("\n");
+        if (lines.length > 25) {
+            StringBuilder b = new StringBuilder();
+            for (int i = lines.length - 25; i < lines.length; i++) {
+                if (b.length() > 0) b.append("\n");
+                b.append(lines[i]);
+            }
+            history = b.toString();
+        }
+        prefs.edit()
+                .putString("last_status", text)
+                .putString("status_history", history)
+                .apply();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification(text));
 
         Intent i = new Intent(ACTION_STATUS);
         i.setPackage(getPackageName());
         i.putExtra(EXTRA_STATUS, text);
+        i.putExtra(EXTRA_HISTORY, history);
         sendBroadcast(i);
     }
 
