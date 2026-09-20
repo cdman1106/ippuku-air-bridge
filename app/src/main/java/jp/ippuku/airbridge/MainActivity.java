@@ -361,13 +361,21 @@ public class MainActivity extends Activity {
                 .setConnectable(true)
                 .build();
 
+        // Keep the primary BLE advertisement small.
+        // Error code 1 (ADVERTISE_FAILED_DATA_TOO_LARGE) occurs when the
+        // device name and HID UUID are packed into the same 31-byte packet.
         AdvertiseData data = new AdvertiseData.Builder()
-                .setIncludeDeviceName(true)
                 .addServiceUuid(new ParcelUuid(HID_SERVICE))
+                .setIncludeDeviceName(false)
+                .build();
+
+        // Put the Android device name in the scan response instead.
+        AdvertiseData scanResponse = new AdvertiseData.Builder()
+                .setIncludeDeviceName(true)
                 .build();
 
         try {
-            advertiser.startAdvertising(settings, data, advertiseCallback);
+            advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback);
             setStatus("BLE広告を開始中…");
         } catch (SecurityException e) {
             setStatus("BLE広告権限がありません。");
