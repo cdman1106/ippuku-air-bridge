@@ -32,21 +32,16 @@ public class BridgeService extends Service {
     public static final String ACTION_SET_TARGET = "jp.ippuku.airbridge.SET_TARGET";
     public static final String ACTION_SEND_BARCODE = "jp.ippuku.airbridge.SEND_BARCODE";
     public static final String ACTION_SEND_KEY = "jp.ippuku.airbridge.SEND_KEY";
-    public static final String ACTION_MOUSE_MOVE = "jp.ippuku.airbridge.MOUSE_MOVE";
-    public static final String ACTION_MOUSE_CLICK = "jp.ippuku.airbridge.MOUSE_CLICK";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
-    public static final String EXTRA_DX = "dx";
-    public static final String EXTRA_DY = "dy";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
-    // Known-good keyboard-only HID descriptor.
-    // This is the same input shape that successfully typed/searches barcodes in Airレジ.
+    // Standard 8-byte USB/Bluetooth boot-keyboard report descriptor.
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
             0x05,0x01,0x09,0x06,(byte)0xA1,0x01,
             0x05,0x07,0x19,(byte)0xE0,0x29,(byte)0xE7,
@@ -175,8 +170,6 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_KEY.equals(action)) {
                 String key = intent.getStringExtra(EXTRA_KEY);
                 if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
-            } else if (ACTION_MOUSE_MOVE.equals(action) || ACTION_MOUSE_CLICK.equals(action)) {
-                publish("マウス機能は停止中。Airレジ検索の安定動作を優先しています。");
             }
         }
         return START_STICKY;
@@ -374,116 +367,6 @@ public class BridgeService extends Service {
                 publish("診断キー送信失敗: " + key);
             }
         });
-    }
-
-    private void moveMouse(int dx, int dy) {
-        if (!connected || target == null || hid == null) {
-            publish("マウス送信不可：iPad未接続");
-            return;
-        }
-        sender.execute(() -> {
-            try {
-                int rx = dx, ry = dy;
-                while (rx != 0 || ry != 0) {
-                    int sx = Math.max(-127, Math.min(127, rx));
-                    int sy = Math.max(-127, Math.min(127, ry));
-                    byte[] report = new byte[]{0, (byte)sx, (byte)sy, 0};
-                    if (!hid.sendReport(target, 2, report)) throw new IllegalStateException();
-                    rx -= sx; ry -= sy;
-                    Thread.sleep(18);
-                }
-                publish("マウス移動: " + dx + "," + dy);
-            } catch (Exception e) {
-                publish("マウス移動失敗");
-            }
-        });
-    }
-
-    private void clickMouse() {
-        if (!connected || target == null || hid == null) {
-            publish("クリック不可：iPad未接続");
-            return;
-        }
-        sender.execute(() -> {
-            try {
-                if (!hid.sendReport(target, 2, new byte[]{1,0,0,0})) throw new IllegalStateException();
-                Thread.sleep(45);
-                if (!hid.sendReport(target, 2, new byte[]{0,0,0,0})) throw new IllegalStateException();
-                publish("マウスクリック送信");
-            } catch (Exception e) {
-                publish("マウスクリック失敗");
-            }
-        });
-    }
-
-    private void sendDiagnosticMouse(String mode, int dx, int dy) {
-        if (!connected || target == null || hid == null) {
-            publish("マウス送信不可：iPad未接続");
-            return;
-        }
-        sender.execute(() -> {
-            try {
-                switch (mode) {
-                    case "HOME":
-                        for (int i = 0; i < 18; i++) {
-                            mouseReport((byte)0, -127, -127, 0);
-                            Thread.sleep(12);
-                        }
-                        publish("マウスを左上へ移動");
-                        break;
-                    case "CLICK":
-                        mouseClick();
-                        publish("マウスクリック送信");
-                        break;
-                    case "MOVE":
-                        mouseMove(dx, dy);
-                        publish("マウス移動 x=" + dx + " y=" + dy);
-                        break;
-                    case "MOVECLICK":
-                        mouseMove(dx, dy);
-                        Thread.sleep(80);
-                        mouseClick();
-                        publish("マウス移動+クリック x=" + dx + " y=" + dy);
-                        break;
-                    default:
-                        publish("未対応マウス操作: " + mode);
-                }
-            } catch (Exception e) {
-                publish("マウス送信失敗: " + mode);
-            }
-        });
-    }
-
-    private void mouseMove(int dx, int dy) throws Exception {
-        int x = dx;
-        int y = dy;
-        while (x != 0 || y != 0) {
-            int sx = Math.max(-127, Math.min(127, x));
-            int sy = Math.max(-127, Math.min(127, y));
-            mouseReport((byte)0, sx, sy, 0);
-            x -= sx;
-            y -= sy;
-            Thread.sleep(12);
-        }
-    }
-
-    private void mouseClick() throws Exception {
-        mouseReport((byte)1, 0, 0, 0);
-        Thread.sleep(40);
-        mouseReport((byte)0, 0, 0, 0);
-        Thread.sleep(40);
-    }
-
-    private void mouseReport(byte buttons, int dx, int dy, int wheel) throws Exception {
-        byte[] report = new byte[] {
-                buttons,
-                (byte)Math.max(-127, Math.min(127, dx)),
-                (byte)Math.max(-127, Math.min(127, dy)),
-                (byte)Math.max(-127, Math.min(127, wheel))
-        };
-        if (!hid.sendReport(target, 2, report)) {
-            throw new IllegalStateException("mouse report failed");
-        }
     }
 
     private void typeBarcode(String code) throws Exception {
