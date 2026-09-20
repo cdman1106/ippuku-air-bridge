@@ -65,8 +65,8 @@ public class BridgeService extends Service {
             0x05,0x09,0x19,0x01,0x29,0x03,0x15,0x00,0x25,0x01,
             (byte)0x95,0x03,0x75,0x01,(byte)0x81,0x02,
             (byte)0x95,0x01,0x75,0x05,(byte)0x81,0x01,
-            0x05,0x01,0x09,0x30,0x09,0x31,0x15,(byte)0x81,0x25,0x7F,
-            0x75,0x08,(byte)0x95,0x02,(byte)0x81,0x06,
+            0x05,0x01,0x09,0x30,0x09,0x31,0x09,0x38,0x15,(byte)0x81,0x25,0x7F,
+            0x75,0x08,(byte)0x95,0x03,(byte)0x81,0x06,
             (byte)0xC0,(byte)0xC0
     };
 
@@ -401,7 +401,7 @@ public class BridgeService extends Service {
                 while (rx != 0 || ry != 0) {
                     int sx = Math.max(-127, Math.min(127, rx));
                     int sy = Math.max(-127, Math.min(127, ry));
-                    byte[] report = new byte[]{0, (byte)sx, (byte)sy};
+                    byte[] report = new byte[]{0, (byte)sx, (byte)sy, 0};
                     if (!hid.sendReport(target, 2, report)) throw new IllegalStateException();
                     rx -= sx; ry -= sy;
                     Thread.sleep(18);
@@ -420,9 +420,9 @@ public class BridgeService extends Service {
         }
         sender.execute(() -> {
             try {
-                if (!hid.sendReport(target, 2, new byte[]{1,0,0})) throw new IllegalStateException();
+                if (!hid.sendReport(target, 2, new byte[]{1,0,0,0})) throw new IllegalStateException();
                 Thread.sleep(45);
-                if (!hid.sendReport(target, 2, new byte[]{0,0,0})) throw new IllegalStateException();
+                if (!hid.sendReport(target, 2, new byte[]{0,0,0,0})) throw new IllegalStateException();
                 publish("マウスクリック送信");
             } catch (Exception e) {
                 publish("マウスクリック失敗");
