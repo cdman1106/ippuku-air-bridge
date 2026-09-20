@@ -187,11 +187,6 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_KEY.equals(action)) {
                 String key = intent.getStringExtra(EXTRA_KEY);
                 if (key != null) sendDiagnosticKey(key.trim().toUpperCase());
-            } else if (ACTION_SEND_MOUSE.equals(action)) {
-                String mode = intent.getStringExtra(EXTRA_MOUSE_MODE);
-                int dx = intent.getIntExtra(EXTRA_DX, 0);
-                int dy = intent.getIntExtra(EXTRA_DY, 0);
-                sendDiagnosticMouse(mode == null ? "MOVE" : mode.trim().toUpperCase(), dx, dy);
             } else if (ACTION_MOUSE_MOVE.equals(action)) {
                 moveMouse(intent.getIntExtra(EXTRA_DX, 0), intent.getIntExtra(EXTRA_DY, 0));
             } else if (ACTION_MOUSE_CLICK.equals(action)) {
