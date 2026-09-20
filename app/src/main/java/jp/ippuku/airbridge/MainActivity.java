@@ -123,7 +123,6 @@ public class MainActivity extends Activity {
         }
 
         requestBtPermissions();
-        startHidProfile();
     }
 
     @Override protected void onDestroy() {
@@ -186,6 +185,24 @@ public class MainActivity extends Activity {
         connect.setText("選択したiPadへ接続");
         connect.setOnClickListener(v -> connectHost());
         body.addView(connect);
+
+        Button testTyping = new Button(this);
+        testTyping.setText("接続テスト：iPadへ TEST123 を送信");
+        testTyping.setOnClickListener(v -> {
+            if (!isHostConnected()) {
+                toast("まだiPadとHID接続できていません。画面上部の状態を確認してください。");
+                return;
+            }
+            sender.execute(() -> {
+                try {
+                    typeText("TEST123");
+                    runOnUiThread(() -> setStatus("TEST123 を送信しました。iPadのメモ等に表示されたか確認してください。"));
+                } catch (Exception e) {
+                    runOnUiThread(() -> setStatus("テスト送信エラー: " + e.getMessage()));
+                }
+            });
+        });
+        body.addView(testTyping);
 
         TextView t1 = new TextView(this);
         t1.setText("\n1商品テスト");
@@ -338,8 +355,8 @@ public class MainActivity extends Activity {
     }
 
     private void sendCodes(List<String> codes, int wait) {
-        if (hid == null || host == null || !hasConnect()) {
-            toast("iPadへBluetooth接続してください。");
+        if (!isHostConnected()) {
+            toast("iPadへBluetooth HID接続してください。上部に「接続済み」と表示されている必要があります。");
             return;
         }
 
@@ -454,18 +471,22 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean isHostConnected() {
+        if (hid == null || host == null || !hasConnect()) return false;
+        try {
+            return hid.getConnectionState(host) == BluetoothProfile.STATE_CONNECTED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void updateButtons() {
         if (connect == null) return;
 
         boolean canConnect = registered && hid != null && host != null && hasConnect();
         connect.setEnabled(canConnect);
 
-        boolean connected = false;
-        if (canConnect) {
-            try {
-                connected = hid.getConnectionState(host) == BluetoothProfile.STATE_CONNECTED;
-            } catch (Exception ignored) {}
-        }
+        boolean connected = canConnect && isHostConnected();
 
         sendOne.setEnabled(connected);
         sendBatch.setEnabled(connected);
