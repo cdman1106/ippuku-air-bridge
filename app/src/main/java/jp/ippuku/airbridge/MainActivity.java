@@ -18,6 +18,7 @@ import android.bluetooth.le.AdvertiseData;
 import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -224,6 +225,12 @@ public class MainActivity extends Activity {
         startBle.setText("BLEキーボードを開始");
         startBle.setOnClickListener(v -> startBleKeyboard());
         body.addView(startBle);
+
+        Button usbTest = new Button(this);
+        usbTest.setText("USB有線モードを試す");
+        usbTest.setOnClickListener(v ->
+                startActivity(new Intent(this, UsbHidDiagnosticsActivity.class)));
+        body.addView(usbTest);
 
         testTyping = new Button(this);
         testTyping.setText("接続テスト：iPadへ TEST123 を送信");
