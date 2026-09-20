@@ -415,6 +415,17 @@ public class BridgeService extends Service {
             case "END": press((byte)0x4D); break;
             case "CMD_A": press((byte)0x08, (byte)0x04); break;
             case "CTRL_A": press((byte)0x01, (byte)0x04); break;
+            case "KP1": press((byte)0x59); break;
+            case "KP2": press((byte)0x5A); break;
+            case "KP3": press((byte)0x5B); break;
+            case "KP4": press((byte)0x5C); break;
+            case "KP5": press((byte)0x5D); break;
+            case "KP6": press((byte)0x5E); break;
+            case "KP7": press((byte)0x5F); break;
+            case "KP8": press((byte)0x60); break;
+            case "KP9": press((byte)0x61); break;
+            case "KP0": press((byte)0x62); break;
+            case "KP_DOT": press((byte)0x63); break;
             default: throw new IllegalArgumentException("unsupported key: " + key);
         }
     }
