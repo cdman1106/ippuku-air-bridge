@@ -157,6 +157,34 @@ public class MainActivity extends Activity {
         btSettings.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         body.addView(btSettings);
 
+        TextView autoTitle = new TextView(this);
+        autoTitle.setText("自動注文（Cloudflare → Airレジ）");
+        autoTitle.setTextSize(22);
+        autoTitle.setPadding(0, dp(20), 0, dp(8));
+        body.addView(autoTitle);
+
+        TextView autoHelp = new TextView(this);
+        autoHelp.setText("開始すると3秒ごとに新規注文を確認します。現在は安全のため「商品番号登録済み・1商品×1個」の注文だけ自動処理します。フルキーボードアクセスはON、マウスキーはOFFのまま使います。");
+        autoHelp.setPadding(0, 0, 0, dp(8));
+        body.addView(autoHelp);
+
+        LinearLayout autoRow = new LinearLayout(this);
+        autoRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button autoStart = new Button(this);
+        autoStart.setText("自動注文 監視開始");
+        autoStart.setMinHeight(dp(60));
+        autoStart.setOnClickListener(v -> setAutoBridge(true));
+        autoRow.addView(autoStart, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button autoStop = new Button(this);
+        autoStop.setText("監視停止");
+        autoStop.setMinHeight(dp(60));
+        autoStop.setOnClickListener(v -> setAutoBridge(false));
+        autoRow.addView(autoStop, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(autoRow);
+
         TextView simpleTitle = new TextView(this);
         simpleTitle.setText("かんたんテスト");
         simpleTitle.setTextSize(22);
@@ -490,7 +518,8 @@ public class MainActivity extends Activity {
         note.setText(
                 "運用中に商品を手動送信するボタンはありません。\n" +
                 "設定後はAir Bridgeがバックグラウンド常駐し、切断時も自動再接続します。\n\n" +
-                "次の段階でCloudflareの注文キューを接続し、注文受信→商品入力→一時保存まで自動化します。");
+                "Cloudflare注文キュー接続済み。監視ON時は新規注文を受信し、対応済み商品をAirレジへ自動入力して伝票保存します。\n" +
+                "会計処理はメインiPadでスタッフが行います。");
         body.addView(note);
 
         ScrollView sv = new ScrollView(this);
@@ -665,6 +694,14 @@ public class MainActivity extends Activity {
         }
         sendMacro(m.toString());
         toast("一発診断を開始しました。iPad画面をそのまま見てください。");
+    }
+
+    private void setAutoBridge(boolean enabled) {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SET_AUTO_BRIDGE);
+        svc.putExtra(BridgeService.EXTRA_ENABLED, enabled);
+        startForegroundCompat(svc);
+        toast(enabled ? "自動注文の監視を開始しました。" : "自動注文の監視を停止しました。");
     }
 
     private void runFullFlowTest() {
