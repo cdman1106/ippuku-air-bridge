@@ -190,7 +190,7 @@ public class MainActivity extends Activity {
         body.addView(learnTitle);
 
         TextView learnHelp = new TextView(this);
-        learnHelp.setText("①「商品候補を表示」→ ②記録開始 → ③下の「戻る / 次へ / 決定」を使い、一時保存まで実際に成功させる → ④記録停止・保存。以後は同じ順番と待ち時間を自動再生します。");
+        learnHelp.setText("①「商品候補を表示」→ ②記録開始 → ③詳細テストの Enter / Tab / Shift+Tab / Space で実際に操作 → ④一時保存まで成功したら記録停止・保存。");
         learnHelp.setPadding(0, 0, 0, dp(6));
         body.addView(learnHelp);
 
@@ -538,27 +538,55 @@ public class MainActivity extends Activity {
 
         body.addView(row1);
 
+        TextView rawLearnTitle = new TextView(this);
+        rawLearnTitle.setText("詳細テスト操作をそのまま記録");
+        rawLearnTitle.setTextSize(18);
+        rawLearnTitle.setPadding(0, dp(10), 0, dp(4));
+        body.addView(rawLearnTitle);
+
+        LinearLayout rawLearnRow = new LinearLayout(this);
+        rawLearnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button rawLearnStart = new Button(this);
+        rawLearnStart.setText("記録開始");
+        rawLearnStart.setOnClickListener(v -> startLearningFlow());
+        rawLearnRow.addView(rawLearnStart,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button rawLearnStop = new Button(this);
+        rawLearnStop.setText("記録停止・保存");
+        rawLearnStop.setOnClickListener(v -> stopAndSaveLearningFlow());
+        rawLearnRow.addView(rawLearnStop,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(rawLearnRow);
+
+        TextView rawLearnHelp = new TextView(this);
+        rawLearnHelp.setText("記録中は下の Enter / Tab / Shift+Tab / Space を普段通り押してください。順番と時間間隔を保存します。");
+        rawLearnHelp.setPadding(0, 0, 0, dp(6));
+        body.addView(rawLearnHelp);
+
         LinearLayout row2 = new LinearLayout(this);
         row2.setOrientation(LinearLayout.HORIZONTAL);
 
         Button enter = new Button(this);
         enter.setText("Enter");
-        enter.setOnClickListener(v -> sendKey("ENTER"));
+        enter.setOnClickListener(v -> sendLearnableKey("ENTER"));
         row2.addView(enter, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button tab = new Button(this);
         tab.setText("Tab");
-        tab.setOnClickListener(v -> sendKey("TAB"));
+        tab.setOnClickListener(v -> sendLearnableKey("TAB"));
         row2.addView(tab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button shiftTab = new Button(this);
         shiftTab.setText("Shift+Tab");
-        shiftTab.setOnClickListener(v -> sendKey("SHIFT_TAB"));
+        shiftTab.setOnClickListener(v -> sendLearnableKey("SHIFT_TAB"));
         row2.addView(shiftTab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button space = new Button(this);
         space.setText("Space");
-        space.setOnClickListener(v -> sendKey("SPACE"));
+        space.setOnClickListener(v -> sendLearnableKey("SPACE"));
         row2.addView(space, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         body.addView(row2);
