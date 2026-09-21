@@ -189,6 +189,18 @@ public class MainActivity extends Activity {
 
         body.addView(autoRow);
 
+        Button prepareNext = new Button(this);
+        prepareNext.setText("次の注文準備（伝票保存後に押す）");
+        prepareNext.setTextSize(18);
+        prepareNext.setMinHeight(dp(60));
+        prepareNext.setOnClickListener(v -> prepareNextOrder());
+        body.addView(prepareNext);
+
+        TextView prepareHelp = new TextView(this);
+        prepareHelp.setText("安全版：1件の伝票保存後は自動で次へ進みません。iPadで伝票保存できたことを確認してから、このボタンを1回押してください。");
+        prepareHelp.setPadding(0, 0, 0, dp(10));
+        body.addView(prepareHelp);
+
         TextView simpleTitle = new TextView(this);
         simpleTitle.setText("かんたんテスト");
         simpleTitle.setTextSize(22);
@@ -698,6 +710,13 @@ public class MainActivity extends Activity {
         }
         sendMacro(m.toString());
         toast("一発診断を開始しました。iPad画面をそのまま見てください。");
+    }
+
+    private void prepareNextOrder() {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_PREPARE_NEXT_ORDER);
+        startForegroundCompat(svc);
+        toast("次の注文準備を開始しました。iPad画面を確認してください。");
     }
 
     private void setAutoBridge(boolean enabled) {
