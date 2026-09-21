@@ -21,10 +21,20 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BridgeService extends Service {
 
@@ -40,15 +50,19 @@ public class BridgeService extends Service {
     public static final String ACTION_SEND_BARCODE_ONLY = "jp.ippuku.airbridge.SEND_BARCODE_ONLY";
     public static final String ACTION_SEND_MACRO = "jp.ippuku.airbridge.SEND_MACRO";
     public static final String ACTION_RUN_FULL_FLOW = "jp.ippuku.airbridge.RUN_FULL_FLOW";
+    public static final String ACTION_SET_AUTO_BRIDGE = "jp.ippuku.airbridge.SET_AUTO_BRIDGE";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
     public static final String EXTRA_SEQUENCE = "sequence";
     public static final String EXTRA_GAP_MS = "gap_ms";
     public static final String EXTRA_MACRO = "macro";
+    public static final String EXTRA_ENABLED = "enabled";
 
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
+    private static final String KEY_AUTO_BRIDGE = "auto_bridge_enabled";
+    private static final String BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
@@ -72,7 +86,22 @@ public class BridgeService extends Service {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService sender = Executors.newSingleThreadExecutor();
+    private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean bridgeBusy = new AtomicBoolean(false);
     private final ConcurrentLinkedQueue<String> pending = new ConcurrentLinkedQueue<>();
+    private String lastBridgeNotice = "";
+
+    private final Runnable bridgePollRunnable = new Runnable() {
+        @Override public void run() {
+            try {
+                if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_AUTO_BRIDGE, false)) {
+                    pollBridgeQueue();
+                }
+            } finally {
+                handler.postDelayed(this, 3000);
+            }
+        }
+    };
 
     private final Runnable reconnectRunnable = new Runnable() {
         @Override public void run() {
@@ -159,6 +188,7 @@ public class BridgeService extends Service {
         adapter = BluetoothAdapter.getDefaultAdapter();
         registerReceiver(btReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
         acquireHidProfile();
+        handler.postDelayed(bridgePollRunnable, 2500);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -194,6 +224,16 @@ public class BridgeService extends Service {
             } else if (ACTION_RUN_FULL_FLOW.equals(action)) {
                 String code = intent.getStringExtra(EXTRA_CODE);
                 if (code != null && !code.trim().isEmpty()) runFullFlow(code.trim());
+            } else if (ACTION_SET_AUTO_BRIDGE.equals(action)) {
+                boolean enabled = intent.getBooleanExtra(EXTRA_ENABLED, false);
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_AUTO_BRIDGE, enabled).apply();
+                if (enabled) {
+                    publish("自動注文ON：Cloudflareの新規注文を監視します。");
+                    handler.removeCallbacks(bridgePollRunnable);
+                    handler.post(bridgePollRunnable);
+                } else {
+                    publish("自動注文OFF：監視を停止しました。");
+                }
             }
         }
         return START_STICKY;
@@ -209,6 +249,7 @@ public class BridgeService extends Service {
             if (adapter != null && hid != null) adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid);
         } catch (Exception ignored) {}
         sender.shutdownNow();
+        network.shutdownNow();
         super.onDestroy();
     }
 
@@ -556,38 +597,179 @@ public class BridgeService extends Service {
         sender.execute(() -> {
             try {
                 publish("実戦テスト開始: " + code);
-
-                // 実機で成功確認済み：13桁入力 → Enter×2 → 商品候補表示
-                typeBarcode(code);
-
-                // 商品候補の描画とフルキーボードアクセスのフォーカス確定待ち
-                Thread.sleep(1400);
-
-                // 実機で成功確認済み：Tab×3 → Space
-                for (int i = 0; i < 3; i++) {
-                    sendNamedKey("TAB");
-                    Thread.sleep(420);
-                }
-                Thread.sleep(350);
-                sendNamedKey("SPACE");
-
-                // 商品追加後の画面更新待ち
-                Thread.sleep(1400);
-
-                // 実機で成功確認済み：Tab×3 → Space = 伝票保存
-                for (int i = 0; i < 3; i++) {
-                    sendNamedKey("TAB");
-                    Thread.sleep(420);
-                }
-                Thread.sleep(350);
-                sendNamedKey("SPACE");
-
+                runFullFlowInternal(code);
                 publish("実戦テスト完了：商品追加→伝票保存まで送信 " + code);
             } catch (Exception e) {
                 Log.e(TAG, "FULL FLOW failed code=" + code, e);
                 publish("実戦テスト失敗：" + e.getClass().getSimpleName());
             }
         });
+    }
+
+    private void runFullFlowInternal(String code) throws Exception {
+        // 実機で成功確認済み：13桁入力 → Enter×2 → 商品候補表示
+        typeBarcode(code);
+
+        // 商品候補の描画とフルキーボードアクセスのフォーカス確定待ち
+        Thread.sleep(1400);
+
+        // 実機で成功確認済み：Tab×3 → Space
+        for (int i = 0; i < 3; i++) {
+            sendNamedKey("TAB");
+            Thread.sleep(420);
+        }
+        Thread.sleep(350);
+        sendNamedKey("SPACE");
+
+        // 商品追加後の画面更新待ち
+        Thread.sleep(1400);
+
+        // 実機で成功確認済み：Tab×3 → Space = 伝票保存
+        for (int i = 0; i < 3; i++) {
+            sendNamedKey("TAB");
+            Thread.sleep(420);
+        }
+        Thread.sleep(350);
+        sendNamedKey("SPACE");
+    }
+
+    private void pollBridgeQueue() {
+        if (!connected || target == null || hid == null) return;
+        if (!bridgeBusy.compareAndSet(false, true)) return;
+
+        network.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                JSONObject response = httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/claim", body);
+
+                if (!response.optBoolean("ok", false)) {
+                    bridgeBusy.set(false);
+                    publishBridgeNotice("自動注文：Cloudflare応答エラー");
+                    return;
+                }
+
+                if (response.optBoolean("blocked", false)) {
+                    String reason = response.optString("reason", "");
+                    if ("MAPPING_REQUIRED".equals(reason)) {
+                        String name = "";
+                        if (response.optJSONArray("missingMappings") != null &&
+                                response.optJSONArray("missingMappings").length() > 0) {
+                            name = response.optJSONArray("missingMappings")
+                                    .optJSONObject(0).optString("displayName", "");
+                        }
+                        publishBridgeNotice("自動注文待機：Airレジ商品番号未登録 " + name);
+                    } else if ("MULTI_ITEM_NOT_VERIFIED".equals(reason)) {
+                        publishBridgeNotice("自動注文待機：複数商品注文。次の実機確認が必要です。");
+                    } else {
+                        publishBridgeNotice("自動注文待機：" + reason);
+                    }
+                    bridgeBusy.set(false);
+                    return;
+                }
+
+                JSONObject order = response.optJSONObject("order");
+                if (order == null) {
+                    bridgeBusy.set(false);
+                    return;
+                }
+
+                String orderId = order.optString("id", "");
+                String seat = order.optString("seat", "");
+                JSONObject item = order.optJSONObject("item");
+                String airCode = item == null ? "" : item.optString("airCode", "");
+                String itemName = item == null ? "" : item.optString("displayName", item.optString("name", ""));
+
+                if (orderId.isEmpty() || !airCode.matches("[0-9]+")) {
+                    bridgeBusy.set(false);
+                    publishBridgeNotice("自動注文：受信データ不正");
+                    return;
+                }
+
+                publish("注文受信 " + seat + " / " + itemName + " → Airレジ入力開始");
+
+                sender.execute(() -> {
+                    try {
+                        runFullFlowInternal(airCode);
+                        network.execute(() -> {
+                            try {
+                                JSONObject done = new JSONObject();
+                                done.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                                httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/orders/" + orderId + "/complete", done);
+                                publish("注文完了 " + seat + " / " + itemName + "：伝票保存済み");
+                            } catch (Exception ackError) {
+                                Log.e(TAG, "bridge completion ack failed", ackError);
+                                publish("伝票保存済み。ただしCloudflare完了通知に失敗：" + orderId);
+                            } finally {
+                                bridgeBusy.set(false);
+                            }
+                        });
+                    } catch (Exception e) {
+                        Log.e(TAG, "auto bridge UI flow failed", e);
+                        network.execute(() -> {
+                            try {
+                                JSONObject failed = new JSONObject();
+                                failed.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                                failed.put("error", e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()));
+                                httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/orders/" + orderId + "/error", failed);
+                            } catch (Exception reportError) {
+                                Log.e(TAG, "bridge error report failed", reportError);
+                            } finally {
+                                bridgeBusy.set(false);
+                                publish("自動注文停止扱い：" + seat + " / " + itemName + "（重複防止のため自動再試行しません）");
+                            }
+                        });
+                    }
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "bridge poll failed", e);
+                bridgeBusy.set(false);
+                publishBridgeNotice("自動注文：Cloudflare接続待ち");
+            }
+        });
+    }
+
+    private void publishBridgeNotice(String message) {
+        if (message.equals(lastBridgeNotice)) return;
+        lastBridgeNotice = message;
+        publish(message);
+    }
+
+    private JSONObject httpJson(String method, String urlString, JSONObject body) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
+        conn.setRequestMethod(method);
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        conn.setUseCaches(false);
+
+        if (body != null) {
+            conn.setDoOutput(true);
+            byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(bytes);
+            }
+        }
+
+        int status = conn.getResponseCode();
+        InputStream stream = status >= 200 && status < 400 ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder text = new StringBuilder();
+        if (stream != null) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) text.append(line);
+            }
+        }
+        conn.disconnect();
+
+        if (text.length() == 0) {
+            JSONObject empty = new JSONObject();
+            empty.put("ok", status >= 200 && status < 300);
+            empty.put("status", status);
+            return empty;
+        }
+        return new JSONObject(text.toString());
     }
 
     private void sendBarcodeOnly(String code) {
