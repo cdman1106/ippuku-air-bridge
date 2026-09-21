@@ -99,8 +99,8 @@ public class MainActivity extends Activity {
         if (quickDelayMs != null) quickDelayMs.setText(p.getString("test_delay", "3000"));
         if (quickTabCount != null) quickTabCount.setText(p.getString("test_tab_count", "1"));
         if (quickTabGapMs != null) quickTabGapMs.setText(p.getString("test_tab_gap", "700"));
-        if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "600"));
-        if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "400"));
+        if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
+        if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
     }
 
     @Override protected void onDestroy() {
@@ -221,46 +221,46 @@ public class MainActivity extends Activity {
         body.addView(oneShotHelp);
 
         TextView mouseKeysTitle = new TextView(this);
-        mouseKeysTitle.setText("Bluetoothマウステスト（本命）");
+        mouseKeysTitle.setText("マウスキーテスト（商品クリック用）");
         mouseKeysTitle.setTextSize(18);
         mouseKeysTitle.setPadding(0, dp(12), 0, dp(4));
         body.addView(mouseKeysTitle);
 
         TextView mouseKeysHelp = new TextView(this);
-        mouseKeysHelp.setText("GalaxyをBluetoothキーボード＋マウスとして直接送信します。iPadの 設定 → アクセシビリティ → タッチ → AssistiveTouch → マウスキー はOFFにしてください。数字入力とポインター操作は別Report IDで送ります。");
+        mouseKeysHelp.setText("商品候補が表示された後だけ使います。iPadで 設定 → アクセシビリティ → タッチ → AssistiveTouch → マウスキー をONにしてください。検索入力は従来のキーボードHIDで安定させます。");
         mouseKeysHelp.setPadding(0, 0, 0, dp(6));
         body.addView(mouseKeysHelp);
 
         LinearLayout mkRow1 = new LinearLayout(this);
         mkRow1.setOrientation(LinearLayout.HORIZONTAL);
         Button mkUp = new Button(this);
-        mkUp.setText("↑ 40");
-        mkUp.setOnClickListener(v -> sendMacro("MOVE:0:-40"));
+        mkUp.setText("↑");
+        mkUp.setOnClickListener(v -> sendKey("KP8"));
         mkRow1.addView(mkUp, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Button mkClick = new Button(this);
-        mkClick.setText("左クリック");
-        mkClick.setOnClickListener(v -> sendMacro("CLICK"));
+        mkClick.setText("クリック");
+        mkClick.setOnClickListener(v -> sendKey("KP5"));
         mkRow1.addView(mkClick, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         body.addView(mkRow1);
 
         LinearLayout mkRow2 = new LinearLayout(this);
         mkRow2.setOrientation(LinearLayout.HORIZONTAL);
         Button mkLeft = new Button(this);
-        mkLeft.setText("← 40");
-        mkLeft.setOnClickListener(v -> sendMacro("MOVE:-40:0"));
+        mkLeft.setText("←");
+        mkLeft.setOnClickListener(v -> sendKey("KP4"));
         mkRow2.addView(mkLeft, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Button mkDown = new Button(this);
-        mkDown.setText("↓ 40");
-        mkDown.setOnClickListener(v -> sendMacro("MOVE:0:40"));
+        mkDown.setText("↓");
+        mkDown.setOnClickListener(v -> sendKey("KP2"));
         mkRow2.addView(mkDown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Button mkRight = new Button(this);
-        mkRight.setText("→ 40");
-        mkRight.setOnClickListener(v -> sendMacro("MOVE:40:0"));
+        mkRight.setText("→");
+        mkRight.setOnClickListener(v -> sendKey("KP6"));
         mkRow2.addView(mkRight, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         body.addView(mkRow2);
 
         Button mkHome = new Button(this);
-        mkHome.setText("ポインターを左上へリセット");
+        mkHome.setText("ポインターを左上方向へ寄せる");
         mkHome.setOnClickListener(v -> runMouseKeyHome());
         body.addView(mkHome);
 
@@ -270,15 +270,15 @@ public class MainActivity extends Activity {
         mouseXSteps = new EditText(this);
         mouseXSteps.setSingleLine(true);
         mouseXSteps.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        mouseXSteps.setText("600");
-        mouseXSteps.setHint("右移動量");
+        mouseXSteps.setText("10");
+        mouseXSteps.setHint("右移動回数");
         mkCoords.addView(mouseXSteps, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         mouseYSteps = new EditText(this);
         mouseYSteps.setSingleLine(true);
         mouseYSteps.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        mouseYSteps.setText("400");
-        mouseYSteps.setHint("下移動量");
+        mouseYSteps.setText("10");
+        mouseYSteps.setHint("下移動回数");
         mkCoords.addView(mouseYSteps, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         body.addView(mkCoords);
@@ -292,7 +292,7 @@ public class MainActivity extends Activity {
         mkCalRow.addView(mkMoveOnly, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button mkMoveClick = new Button(this);
-        mkMoveClick.setText("移動→左クリック");
+        mkMoveClick.setText("移動→クリック");
         mkMoveClick.setOnClickListener(v -> runMouseKeyMove(true));
         mkCalRow.addView(mkMoveClick, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -587,15 +587,24 @@ public class MainActivity extends Activity {
     }
 
     private void runMouseKeyHome() {
-        sendMacro("MOUSE_HOME");
+        String upLeft = buildRepeatedKey("KP7", 35, 90);
+        sendMacro(upLeft);
     }
 
     private String buildMouseMoveMacro(boolean click) {
-        int x = readInt(mouseXSteps, 600, 0, 2000);
-        int y = readInt(mouseYSteps, 400, 0, 2000);
+        int x = readInt(mouseXSteps, 10, 0, 120);
+        int y = readInt(mouseYSteps, 10, 0, 120);
         StringBuilder m = new StringBuilder();
-        m.append("MOUSE_HOME,WAIT:200,MOVE:").append(x).append(":").append(y);
-        if (click) m.append(",WAIT:250,CLICK");
+        m.append(buildRepeatedKey("KP7", 35, 70));
+        if (x > 0) {
+            if (m.length() > 0) m.append(",WAIT:250,");
+            m.append(buildRepeatedKey("KP6", x, 90));
+        }
+        if (y > 0) {
+            if (m.length() > 0) m.append(",WAIT:250,");
+            m.append(buildRepeatedKey("KP2", y, 90));
+        }
+        if (click) m.append(",WAIT:300,KP5");
         return m.toString();
     }
 
@@ -640,8 +649,10 @@ public class MainActivity extends Activity {
             toast("バーコードを入力してください。");
             return;
         }
-        int wait = readInt(quickDelayMs, 2500, 0, 10000);
-        sendMacro("CLEAR,WAIT:300,TEXT:" + code + ",WAIT:" + wait + ",ENTER,WAIT:600,ENTER");
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_SEND_BARCODE);
+        svc.putExtra(BridgeService.EXTRA_CODE, code);
+        startForegroundCompat(svc);
     }
 
     private void runTabWalk() {
