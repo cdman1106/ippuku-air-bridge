@@ -631,6 +631,17 @@ public class BridgeService extends Service {
         }
         Thread.sleep(350);
         sendNamedKey("SPACE");
+
+        // 伝票保存後はフォーカスが検索入力欄から外れる。
+        // 実機確認済み：Tab×7 → Space で次の商品番号を入力できる状態へ戻る。
+        Thread.sleep(1400);
+        for (int i = 0; i < 7; i++) {
+            sendNamedKey("TAB");
+            Thread.sleep(420);
+        }
+        Thread.sleep(350);
+        sendNamedKey("SPACE");
+        Thread.sleep(700);
     }
 
     private void pollBridgeQueue() {
