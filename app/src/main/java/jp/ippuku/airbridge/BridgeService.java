@@ -665,7 +665,7 @@ public class BridgeService extends Service {
             }
 
             // 学習再生では安全上、フォーカス移動と決定だけ許可。
-            if ("TAB".equals(token) || "SHIFT_TAB".equals(token) || "SPACE".equals(token)) {
+            if ("ENTER".equals(token) || "TAB".equals(token) || "SHIFT_TAB".equals(token) || "SPACE".equals(token)) {
                 sendNamedKey(token);
                 continue;
             }
