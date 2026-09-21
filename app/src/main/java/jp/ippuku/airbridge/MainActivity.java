@@ -208,6 +208,18 @@ public class MainActivity extends Activity {
         quickSearch.setOnClickListener(v -> runQuickSearch());
         body.addView(quickSearch);
 
+        Button fullFlow = new Button(this);
+        fullFlow.setText("★ 実戦テスト：商品追加 → 伝票保存");
+        fullFlow.setTextSize(19);
+        fullFlow.setMinHeight(dp(64));
+        fullFlow.setOnClickListener(v -> runFullFlowTest());
+        body.addView(fullFlow);
+
+        TextView fullFlowHelp = new TextView(this);
+        fullFlowHelp.setText("実機で成功した順番をそのまま自動実行：JAN入力 → Enter×2 → Tab×3 → Space → Tab×3 → Space。会計処理はしません。");
+        fullFlowHelp.setPadding(0, 0, 0, dp(12));
+        body.addView(fullFlowHelp);
+
         Button oneShotDiag = new Button(this);
         oneShotDiag.setText("一発診断（約20秒・決定しない）");
         oneShotDiag.setTextSize(18);
@@ -653,6 +665,19 @@ public class MainActivity extends Activity {
         }
         sendMacro(m.toString());
         toast("一発診断を開始しました。iPad画面をそのまま見てください。");
+    }
+
+    private void runFullFlowTest() {
+        String code = currentBarcode();
+        if (code.isEmpty()) {
+            toast("バーコードを入力してください。");
+            return;
+        }
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_RUN_FULL_FLOW);
+        svc.putExtra(BridgeService.EXTRA_CODE, code);
+        startForegroundCompat(svc);
+        toast("実戦テスト開始：商品追加 → 伝票保存まで自動実行します。");
     }
 
     private void runQuickSearch() {
