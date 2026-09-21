@@ -47,6 +47,10 @@ public class MainActivity extends Activity {
     private EditText mouseXSteps;
     private EditText mouseYSteps;
     private TextView historyView;
+    private TextView learnedFlowView;
+    private boolean learningFlow = false;
+    private final StringBuilder learnedFlowBuffer = new StringBuilder();
+    private long learnedLastKeyAt = 0L;
     private final List<BluetoothDevice> bonded = new ArrayList<>();
     private BroadcastReceiver statusReceiver;
     private boolean receiverRegistered;
@@ -111,6 +115,7 @@ public class MainActivity extends Activity {
         if (productSelectTabs != null) productSelectTabs.setText(String.valueOf(p.getInt("product_select_tabs", 2)));
         if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
         if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
+        refreshLearnedFlowView();
     }
 
     @Override protected void onDestroy() {
@@ -177,6 +182,42 @@ public class MainActivity extends Activity {
         autoHelp.setText("開始すると3秒ごとに新規注文を確認します。現在は安全のため「商品番号登録済み・1商品×1個」の注文だけ自動処理します。フルキーボードアクセスはON、マウスキーはOFFのまま使います。");
         autoHelp.setPadding(0, 0, 0, dp(8));
         body.addView(autoHelp);
+
+        TextView learnTitle = new TextView(this);
+        learnTitle.setText("実機操作を記憶");
+        learnTitle.setTextSize(20);
+        learnTitle.setPadding(0, dp(8), 0, dp(4));
+        body.addView(learnTitle);
+
+        TextView learnHelp = new TextView(this);
+        learnHelp.setText("①「商品候補を表示」→ ②記録開始 → ③下の「戻る / 次へ / 決定」を使い、一時保存まで実際に成功させる → ④記録停止・保存。以後は同じ順番と待ち時間を自動再生します。");
+        learnHelp.setPadding(0, 0, 0, dp(6));
+        body.addView(learnHelp);
+
+        LinearLayout learnRow = new LinearLayout(this);
+        learnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button learnStart = new Button(this);
+        learnStart.setText("記録開始");
+        learnStart.setOnClickListener(v -> startLearningFlow());
+        learnRow.addView(learnStart, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button learnStop = new Button(this);
+        learnStop.setText("記録停止・保存");
+        learnStop.setOnClickListener(v -> stopAndSaveLearningFlow());
+        learnRow.addView(learnStop, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(learnRow);
+
+        learnedFlowView = new TextView(this);
+        learnedFlowView.setTextSize(13);
+        learnedFlowView.setPadding(0, 0, 0, dp(6));
+        body.addView(learnedFlowView);
+
+        Button clearLearned = new Button(this);
+        clearLearned.setText("記録した操作を消す");
+        clearLearned.setOnClickListener(v -> clearLearningFlow());
+        body.addView(clearLearned);
 
         LinearLayout selectTabRow = new LinearLayout(this);
         selectTabRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -295,7 +336,7 @@ public class MainActivity extends Activity {
         body.addView(fullFlow);
 
         TextView fullFlowHelp = new TextView(this);
-        fullFlowHelp.setText("自動実行：JAN入力 → Enter×2 → 商品選択Tab回数 → Space → Tab×3 → Space。商品選択Tab回数は上で変更できます。会計処理はしません。");
+        fullFlowHelp.setText("保存した実機操作がある場合は、JAN入力 → Enter×2 → 保存済み操作をそのまま再生します。記録がない場合だけ固定Tab設定を使います。会計処理はしません。");
         fullFlowHelp.setPadding(0, 0, 0, dp(12));
         body.addView(fullFlowHelp);
 
@@ -412,19 +453,19 @@ public class MainActivity extends Activity {
         Button quickPrev = new Button(this);
         quickPrev.setText("← 戻る");
         quickPrev.setTextSize(17);
-        quickPrev.setOnClickListener(v -> sendKey("SHIFT_TAB"));
+        quickPrev.setOnClickListener(v -> sendLearnableKey("SHIFT_TAB"));
         simpleRow.addView(quickPrev, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button quickNext = new Button(this);
         quickNext.setText("② 次へ");
         quickNext.setTextSize(17);
-        quickNext.setOnClickListener(v -> sendKey("TAB"));
+        quickNext.setOnClickListener(v -> sendLearnableKey("TAB"));
         simpleRow.addView(quickNext, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button quickSelect = new Button(this);
         quickSelect.setText("③ 決定");
         quickSelect.setTextSize(17);
-        quickSelect.setOnClickListener(v -> sendKey("SPACE"));
+        quickSelect.setOnClickListener(v -> sendLearnableKey("SPACE"));
         simpleRow.addView(quickSelect, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         body.addView(simpleRow);
@@ -745,6 +786,66 @@ public class MainActivity extends Activity {
         }
         sendMacro(m.toString());
         toast("一発診断を開始しました。iPad画面をそのまま見てください。");
+    }
+
+    private void startLearningFlow() {
+        learningFlow = true;
+        learnedFlowBuffer.setLength(0);
+        learnedLastKeyAt = 0L;
+        refreshLearnedFlowView();
+        toast("記録開始。iPadを見ながら「戻る / 次へ / 決定」で一時保存まで操作してください。");
+    }
+
+    private void stopAndSaveLearningFlow() {
+        learningFlow = false;
+        String macro = learnedFlowBuffer.toString();
+        if (macro.trim().isEmpty()) {
+            toast("まだ操作が記録されていません。");
+            refreshLearnedFlowView();
+            return;
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("learned_airregi_flow", macro).apply();
+        refreshLearnedFlowView();
+        toast("成功操作を保存しました。次回から自動再生します。");
+    }
+
+    private void clearLearningFlow() {
+        learningFlow = false;
+        learnedFlowBuffer.setLength(0);
+        learnedLastKeyAt = 0L;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .remove("learned_airregi_flow").apply();
+        refreshLearnedFlowView();
+        toast("記録した操作を消しました。");
+    }
+
+    private void sendLearnableKey(String key) {
+        if (learningFlow) {
+            long now = System.currentTimeMillis();
+            if (learnedFlowBuffer.length() > 0 && learnedLastKeyAt > 0L) {
+                long wait = Math.max(80L, Math.min(5000L, now - learnedLastKeyAt));
+                learnedFlowBuffer.append(",WAIT:").append(wait).append(",");
+            }
+            learnedFlowBuffer.append(key);
+            learnedLastKeyAt = now;
+            refreshLearnedFlowView();
+        }
+        sendKey(key);
+    }
+
+    private void refreshLearnedFlowView() {
+        if (learnedFlowView == null) return;
+        if (learningFlow) {
+            String live = learnedFlowBuffer.toString();
+            learnedFlowView.setText("● 記録中\n" + (live.isEmpty() ? "まだ操作なし" : live));
+            return;
+        }
+        String saved = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("learned_airregi_flow", "");
+        learnedFlowView.setText(saved.isEmpty()
+                ? "保存済み操作：なし（固定Tab設定を使用）"
+                : "保存済み操作：\n" + saved);
     }
 
     private void prepareNextOrder() {
