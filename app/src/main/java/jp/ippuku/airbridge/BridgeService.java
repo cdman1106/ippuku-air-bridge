@@ -21,6 +21,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -30,6 +31,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -674,6 +677,100 @@ public class BridgeService extends Service {
         }
     }
 
+    private void runOrderItemsFlow(JSONArray items) throws Exception {
+        LearnedOrderTemplate learned = getLearnedOrderTemplate();
+
+        if (items.length() > 1 && learned == null) {
+            throw new IllegalStateException("MULTI_ITEM_TEMPLATE_REQUIRED");
+        }
+
+        if (learned == null) {
+            JSONObject only = items.optJSONObject(0);
+            if (only == null) throw new IllegalArgumentException("missing item");
+            runFullFlowInternal(only.optString("airCode", ""));
+            return;
+        }
+
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) throw new IllegalArgumentException("missing item " + i);
+            String code = item.optString("airCode", "");
+            if (!code.matches("[0-9]+")) throw new IllegalArgumentException("invalid air code " + i);
+
+            publish("Airレジ入力 " + (i + 1) + "/" + items.length() + "："
+                    + item.optString("displayName", item.optString("name", "")));
+
+            // 学習記録はEnterから始まるため、ここでは数字だけ入力する。
+            typeDigits(code);
+            // 先頭Enter前は従来の実機安定値を確保。
+            Thread.sleep(1800);
+
+            if (i < items.length() - 1) {
+                // 途中の商品：商品追加後、次の商品番号を入力できる位置まで戻る。
+                runLearnedFlowInternal(learned.betweenItems);
+            } else {
+                // 最後の商品：商品追加→伝票一時保存→次の注文位置まで。
+                runLearnedFlowInternal(learned.finalItem);
+            }
+        }
+    }
+
+    private LearnedOrderTemplate getLearnedOrderTemplate() {
+        String macro = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_LEARNED_FLOW, "");
+        if (macro == null || macro.trim().isEmpty()) return null;
+
+        String[] raw = macro.split(",");
+        List<String> tokens = new ArrayList<>();
+        for (String part : raw) {
+            String t = part == null ? "" : part.trim().toUpperCase();
+            if (!t.isEmpty()) tokens.add(t);
+        }
+        if (tokens.size() < 8) return null;
+
+        int firstPair = findEnterPairStart(tokens, 0);
+        if (firstPair < 0) return null;
+        int secondPair = findEnterPairStart(tokens, firstPair + 1);
+        if (secondPair < 0 || secondPair <= firstPair) return null;
+
+        String between = joinMacroTokens(tokens, firstPair, secondPair);
+        String last = joinMacroTokens(tokens, secondPair, tokens.size());
+        if (!between.contains("SPACE") || !last.contains("SPACE")) return null;
+
+        return new LearnedOrderTemplate(between, last);
+    }
+
+    private int findEnterPairStart(List<String> tokens, int start) {
+        for (int i = Math.max(0, start); i < tokens.size(); i++) {
+            if (!"ENTER".equals(tokens.get(i))) continue;
+            for (int j = i + 1; j < tokens.size(); j++) {
+                String t = tokens.get(j);
+                if (t.startsWith("WAIT:")) continue;
+                if ("ENTER".equals(t)) return i;
+                break;
+            }
+        }
+        return -1;
+    }
+
+    private String joinMacroTokens(List<String> tokens, int from, int to) {
+        StringBuilder out = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            if (out.length() > 0) out.append(",");
+            out.append(tokens.get(i));
+        }
+        return out.toString();
+    }
+
+    private static final class LearnedOrderTemplate {
+        final String betweenItems;
+        final String finalItem;
+        LearnedOrderTemplate(String betweenItems, String finalItem) {
+            this.betweenItems = betweenItems;
+            this.finalItem = finalItem;
+        }
+    }
+
     private void prepareNextOrderManually() {
         // 安全優先：ここではiPadへキーを一切送らない。
         // スタッフがAirレジの検索欄を手動でタップした後に、
@@ -681,7 +778,7 @@ public class BridgeService extends Service {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putBoolean(KEY_NEEDS_NEXT_PREP, false).apply();
         lastBridgeNotice = "";
-        publish("次の注文受付を再開しました。Airレジの検索欄が選択されていることを確認してください。");
+        publish("次の注文受付を再開しました。Airレジが商品番号入力位置になっていることを確認してください。");
     }
 
     private void pollBridgeQueue() {
@@ -696,6 +793,7 @@ public class BridgeService extends Service {
             try {
                 JSONObject body = new JSONObject();
                 body.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                body.put("multiItemLearned", getLearnedOrderTemplate() != null);
                 JSONObject response = httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/claim", body);
 
                 if (!response.optBoolean("ok", false)) {
@@ -714,8 +812,10 @@ public class BridgeService extends Service {
                                     .optJSONObject(0).optString("displayName", "");
                         }
                         publishBridgeNotice("自動注文待機：Airレジ商品番号未登録 " + name);
-                    } else if ("MULTI_ITEM_NOT_VERIFIED".equals(reason)) {
-                        publishBridgeNotice("自動注文待機：複数商品注文。次の実機確認が必要です。");
+                    } else if ("MULTI_ITEM_TEMPLATE_REQUIRED".equals(reason)) {
+                        publishBridgeNotice("自動注文待機：複数商品用の実機記録が必要です。");
+                    } else if ("TOO_MANY_ITEMS".equals(reason)) {
+                        publishBridgeNotice("自動注文待機：1伝票の商品数が多すぎます。");
                     } else {
                         publishBridgeNotice("自動注文待機：" + reason);
                     }
@@ -731,21 +831,49 @@ public class BridgeService extends Service {
 
                 String orderId = order.optString("id", "");
                 String seat = order.optString("seat", "");
-                JSONObject item = order.optJSONObject("item");
-                String airCode = item == null ? "" : item.optString("airCode", "");
-                String itemName = item == null ? "" : item.optString("displayName", item.optString("name", ""));
+                JSONArray items = order.optJSONArray("items");
+                if (items == null || items.length() == 0) {
+                    JSONObject legacyItem = order.optJSONObject("item");
+                    if (legacyItem != null) {
+                        items = new JSONArray();
+                        items.put(legacyItem);
+                    }
+                }
 
-                if (orderId.isEmpty() || !airCode.matches("[0-9]+")) {
+                if (orderId.isEmpty() || items == null || items.length() == 0) {
                     bridgeBusy.set(false);
                     publishBridgeNotice("自動注文：受信データ不正");
                     return;
                 }
 
-                publish("注文受信 " + seat + " / " + itemName + " / コード:" + airCode + " → Airレジ入力開始");
+                boolean validItems = true;
+                String firstItemName = "";
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.optJSONObject(i);
+                    String airCode = item == null ? "" : item.optString("airCode", "");
+                    if (!airCode.matches("[0-9]+")) {
+                        validItems = false;
+                        break;
+                    }
+                    if (i == 0) {
+                        firstItemName = item.optString("displayName", item.optString("name", ""));
+                    }
+                }
+                if (!validItems) {
+                    bridgeBusy.set(false);
+                    publishBridgeNotice("自動注文：商品コード受信データ不正");
+                    return;
+                }
+
+                final JSONArray orderItems = items;
+                final String itemSummary = orderItems.length() == 1
+                        ? firstItemName
+                        : firstItemName + " ほか" + (orderItems.length() - 1) + "点";
+                publish("注文受信 " + seat + " / " + itemSummary + " / " + orderItems.length() + "商品 → Airレジ入力開始");
 
                 sender.execute(() -> {
                     try {
-                        runFullFlowInternal(airCode);
+                        runOrderItemsFlow(orderItems);
                         network.execute(() -> {
                             try {
                                 JSONObject done = new JSONObject();
@@ -754,7 +882,7 @@ public class BridgeService extends Service {
                                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                                         .putBoolean(KEY_NEEDS_NEXT_PREP, true).apply();
                                 lastBridgeNotice = "";
-                                publish("注文完了 " + seat + " / " + itemName + "：伝票保存。安全のため次の注文は一時停止中。");
+                                publish("注文完了 " + seat + " / " + itemSummary + "：伝票保存。次の注文位置まで記録再生済み。画面確認後に次の注文を許可してください。");
                             } catch (Exception ackError) {
                                 Log.e(TAG, "bridge completion ack failed", ackError);
                                 publish("伝票保存済み。ただしCloudflare完了通知に失敗：" + orderId);
@@ -774,7 +902,7 @@ public class BridgeService extends Service {
                                 Log.e(TAG, "bridge error report failed", reportError);
                             } finally {
                                 bridgeBusy.set(false);
-                                publish("自動注文停止扱い：" + seat + " / " + itemName + "（重複防止のため自動再試行しません）");
+                                publish("自動注文停止扱い：" + seat + " / " + itemSummary + "（重複防止のため自動再試行しません）");
                             }
                         });
                     }
