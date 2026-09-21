@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
     private EditText quickDelayMs;
     private EditText quickTabCount;
     private EditText quickTabGapMs;
+    private EditText productSelectTabs;
     private EditText mouseXSteps;
     private EditText mouseYSteps;
     private TextView historyView;
@@ -92,6 +93,10 @@ public class MainActivity extends Activity {
         if (quickDelayMs != null) e.putString("test_delay", quickDelayMs.getText().toString());
         if (quickTabCount != null) e.putString("test_tab_count", quickTabCount.getText().toString());
         if (quickTabGapMs != null) e.putString("test_tab_gap", quickTabGapMs.getText().toString());
+        if (productSelectTabs != null) {
+            int tabs = readInt(productSelectTabs, 2, 0, 8);
+            e.putInt("product_select_tabs", tabs);
+        }
         if (mouseXSteps != null) e.putString("mouse_x_steps", mouseXSteps.getText().toString());
         if (mouseYSteps != null) e.putString("mouse_y_steps", mouseYSteps.getText().toString());
         e.apply();
@@ -103,6 +108,7 @@ public class MainActivity extends Activity {
         if (quickDelayMs != null) quickDelayMs.setText(p.getString("test_delay", "3000"));
         if (quickTabCount != null) quickTabCount.setText(p.getString("test_tab_count", "1"));
         if (quickTabGapMs != null) quickTabGapMs.setText(p.getString("test_tab_gap", "700"));
+        if (productSelectTabs != null) productSelectTabs.setText(String.valueOf(p.getInt("product_select_tabs", 2)));
         if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
         if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
     }
@@ -171,6 +177,35 @@ public class MainActivity extends Activity {
         autoHelp.setText("開始すると3秒ごとに新規注文を確認します。現在は安全のため「商品番号登録済み・1商品×1個」の注文だけ自動処理します。フルキーボードアクセスはON、マウスキーはOFFのまま使います。");
         autoHelp.setPadding(0, 0, 0, dp(8));
         body.addView(autoHelp);
+
+        LinearLayout selectTabRow = new LinearLayout(this);
+        selectTabRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        productSelectTabs = new EditText(this);
+        productSelectTabs.setSingleLine(true);
+        productSelectTabs.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        productSelectTabs.setText("2");
+        productSelectTabs.setHint("商品選択Tab回数");
+        selectTabRow.addView(productSelectTabs,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button saveSelectTabs = new Button(this);
+        saveSelectTabs.setText("Tab回数を適用");
+        saveSelectTabs.setOnClickListener(v -> {
+            int tabs = readInt(productSelectTabs, 2, 0, 8);
+            productSelectTabs.setText(String.valueOf(tabs));
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putInt("product_select_tabs", tabs).apply();
+            toast("商品選択Tab回数を " + tabs + " 回に設定しました。");
+        });
+        selectTabRow.addView(saveSelectTabs,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        body.addView(selectTabRow);
+
+        TextView selectTabHelp = new TextView(this);
+        selectTabHelp.setText("今の実機結果に合わせて2回が初期値。商品タイルを通り越すなら減らし、手前で止まるなら増やします。");
+        selectTabHelp.setPadding(0, 0, 0, dp(8));
+        body.addView(selectTabHelp);
 
         LinearLayout autoRow = new LinearLayout(this);
         autoRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -260,7 +295,7 @@ public class MainActivity extends Activity {
         body.addView(fullFlow);
 
         TextView fullFlowHelp = new TextView(this);
-        fullFlowHelp.setText("実機で成功した順番をそのまま自動実行：JAN入力 → Enter×2 → Tab×3 → Space → Tab×3 → Space。会計処理はしません。");
+        fullFlowHelp.setText("自動実行：JAN入力 → Enter×2 → 商品選択Tab回数 → Space → Tab×3 → Space。商品選択Tab回数は上で変更できます。会計処理はしません。");
         fullFlowHelp.setPadding(0, 0, 0, dp(12));
         body.addView(fullFlowHelp);
 
