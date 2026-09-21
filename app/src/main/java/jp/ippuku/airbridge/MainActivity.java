@@ -34,6 +34,8 @@ public class MainActivity extends Activity {
     private static final int REQ_DISCOVERABLE = 1002;
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
+    private static final String KEY_BRIDGE_BASE_URL = "bridge_api_base_url";
+    private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
 
     private BluetoothAdapter adapter;
     private TextView status;
@@ -44,6 +46,7 @@ public class MainActivity extends Activity {
     private EditText quickTabCount;
     private EditText quickTabGapMs;
     private EditText productSelectTabs;
+    private EditText bridgeApiUrl;
     private EditText mouseXSteps;
     private EditText mouseYSteps;
     private TextView historyView;
@@ -103,6 +106,10 @@ public class MainActivity extends Activity {
         }
         if (mouseXSteps != null) e.putString("mouse_x_steps", mouseXSteps.getText().toString());
         if (mouseYSteps != null) e.putString("mouse_y_steps", mouseYSteps.getText().toString());
+        if (bridgeApiUrl != null) {
+            String url = normalizeBridgeUrl(bridgeApiUrl.getText().toString());
+            if (!url.isEmpty()) e.putString(KEY_BRIDGE_BASE_URL, url);
+        }
         e.apply();
     }
 
@@ -115,6 +122,7 @@ public class MainActivity extends Activity {
         if (productSelectTabs != null) productSelectTabs.setText(String.valueOf(p.getInt("product_select_tabs", 2)));
         if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
         if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
+        if (bridgeApiUrl != null) bridgeApiUrl.setText(p.getString(KEY_BRIDGE_BASE_URL, DEFAULT_BRIDGE_BASE_URL));
         refreshLearnedFlowView();
     }
 
@@ -182,6 +190,44 @@ public class MainActivity extends Activity {
         autoHelp.setText("開始すると3秒ごとに新規注文を確認します。保存済みの2商品実機記録を自動分解し、同じ伝票内の複数商品・複数量を順番に入力します。伝票保存後は安全のため次の注文だけ一時停止します。");
         autoHelp.setPadding(0, 0, 0, dp(8));
         body.addView(autoHelp);
+
+        bridgeApiUrl = new EditText(this);
+        bridgeApiUrl.setSingleLine(true);
+        bridgeApiUrl.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        bridgeApiUrl.setHint("Bridge API URL");
+        bridgeApiUrl.setText(DEFAULT_BRIDGE_BASE_URL);
+        body.addView(bridgeApiUrl);
+
+        LinearLayout apiRow = new LinearLayout(this);
+        apiRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button saveApi = new Button(this);
+        saveApi.setText("Bridge URL保存");
+        saveApi.setOnClickListener(v -> {
+            String url = normalizeBridgeUrl(bridgeApiUrl.getText().toString());
+            if (url.isEmpty()) {
+                toast("https:// から始まるURLを入力してください。");
+                return;
+            }
+            bridgeApiUrl.setText(url);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(KEY_BRIDGE_BASE_URL, url).apply();
+            toast("Bridge API URLを保存しました。");
+        });
+        apiRow.addView(saveApi, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button testApi = new Button(this);
+        testApi.setText("接続確認");
+        testApi.setOnClickListener(v -> testBridgeApi());
+        apiRow.addView(testApi, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(apiRow);
+
+        TextView apiHelp = new TextView(this);
+        apiHelp.setText("お客様の注文画面とは別のBridge専用Workerを指定できます。URLを切り替えても注文画面側は変更されません。");
+        apiHelp.setPadding(0, 0, 0, dp(8));
+        body.addView(apiHelp);
 
         TextView learnTitle = new TextView(this);
         learnTitle.setText("実機操作を記憶");
@@ -883,6 +929,21 @@ public class MainActivity extends Activity {
                     : "複数商品テンプレート候補：未検出";
             learnedFlowView.setText(recognition + "\n保存済み操作：\n" + saved);
         }
+    }
+
+    private String normalizeBridgeUrl(String raw) {
+        if (raw == null) return "";
+        String url = raw.trim();
+        while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+        return url.startsWith("https://") ? url : "";
+    }
+
+    private void testBridgeApi() {
+        saveTestSettings();
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_TEST_BRIDGE_API);
+        startForegroundCompat(svc);
+        toast("Bridge APIへ接続確認中…");
     }
 
     private void prepareNextOrder() {
