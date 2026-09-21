@@ -64,6 +64,7 @@ public class BridgeService extends Service {
     private static final String KEY_TARGET = "target_address";
     private static final String KEY_AUTO_BRIDGE = "auto_bridge_enabled";
     private static final String KEY_NEEDS_NEXT_PREP = "needs_next_order_prep";
+    private static final String KEY_PRODUCT_SELECT_TABS = "product_select_tabs";
     private static final String BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -617,8 +618,12 @@ public class BridgeService extends Service {
         // 商品候補の描画とフルキーボードアクセスのフォーカス確定待ち
         Thread.sleep(1400);
 
-        // 実機で成功確認済み：Tab×3 → Space
-        for (int i = 0; i < 3; i++) {
+        // 商品タイルまでのTab回数はAirレジのフォーカス位置で変わるため設定可能。
+        // 現在の実機確認では3回だと最初の商品を通り越したため、既定値は2回。
+        int productSelectTabs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getInt(KEY_PRODUCT_SELECT_TABS, 2);
+        productSelectTabs = Math.max(0, Math.min(8, productSelectTabs));
+        for (int i = 0; i < productSelectTabs; i++) {
             sendNamedKey("TAB");
             Thread.sleep(420);
         }
