@@ -179,7 +179,7 @@ public class MainActivity extends Activity {
         body.addView(autoTitle);
 
         TextView autoHelp = new TextView(this);
-        autoHelp.setText("開始すると3秒ごとに新規注文を確認します。現在は安全のため「商品番号登録済み・1商品×1個」の注文だけ自動処理します。フルキーボードアクセスはON、マウスキーはOFFのまま使います。");
+        autoHelp.setText("開始すると3秒ごとに新規注文を確認します。保存済みの2商品実機記録を自動分解し、同じ伝票内の複数商品・複数量を順番に入力します。伝票保存後は安全のため次の注文だけ一時停止します。");
         autoHelp.setPadding(0, 0, 0, dp(8));
         body.addView(autoHelp);
 
@@ -273,7 +273,7 @@ public class MainActivity extends Activity {
         body.addView(prepareNext);
 
         TextView prepareHelp = new TextView(this);
-        prepareHelp.setText("安全版：1件保存後は自動停止します。iPadのAirレジで検索欄を手動でタップしてから、このボタンを1回押してください。GalaxyからTabやSpaceは送りません。");
+        prepareHelp.setText("安全版：1件保存後は自動停止します。学習記録の最後で次の商品番号入力位置まで戻します。iPad画面を確認してから、このボタンを1回押してください。このボタン自体はTabやSpaceを送りません。");
         prepareHelp.setPadding(0, 0, 0, dp(10));
         body.addView(prepareHelp);
 
@@ -821,7 +821,7 @@ public class MainActivity extends Activity {
         learnedFlowBuffer.setLength(0);
         learnedLastKeyAt = 0L;
         refreshLearnedFlowView();
-        toast("記録開始。iPadを見ながら「戻る / 次へ / 決定」で一時保存まで操作してください。");
+        toast("記録開始。詳細テストの Enter / Tab / Shift+Tab / Space で操作してください。");
     }
 
     private void stopAndSaveLearningFlow() {
@@ -871,9 +871,18 @@ public class MainActivity extends Activity {
         }
         String saved = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString("learned_airregi_flow", "");
-        learnedFlowView.setText(saved.isEmpty()
-                ? "保存済み操作：なし（固定Tab設定を使用）"
-                : "保存済み操作：\n" + saved);
+        if (saved.isEmpty()) {
+            learnedFlowView.setText("保存済み操作：なし（固定Tab設定を使用）");
+        } else {
+            int enterCount = 0;
+            for (String token : saved.toUpperCase().split(",")) {
+                if ("ENTER".equals(token.trim())) enterCount++;
+            }
+            String recognition = enterCount >= 4
+                    ? "複数商品テンプレート候補：検出済み"
+                    : "複数商品テンプレート候補：未検出";
+            learnedFlowView.setText(recognition + "\n保存済み操作：\n" + saved);
+        }
     }
 
     private void prepareNextOrder() {
