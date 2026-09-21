@@ -415,6 +415,7 @@ public class BridgeService extends Service {
             case "END": press((byte)0x4D); break;
             case "CMD_A": press((byte)0x08, (byte)0x04); break;
             case "CTRL_A": press((byte)0x01, (byte)0x04); break;
+            case "OPTION": press((byte)0x04, (byte)0x00); break;
             case "KP1": press((byte)0x59); break;
             case "KP2": press((byte)0x5A); break;
             case "KP3": press((byte)0x5B); break;
@@ -456,6 +457,27 @@ public class BridgeService extends Service {
                         String text = token.substring(5);
                         Log.i(TAG, "MACRO text len=" + text.length());
                         typeAscii(text);
+                        sentAny = true;
+                        continue;
+                    }
+
+                    if ("MOUSEKEYS_TOGGLE".equalsIgnoreCase(token)) {
+                        Log.i(TAG, "MACRO toggle Mouse Keys via Option x5");
+                        for (int i = 0; i < 5; i++) {
+                            press((byte)0x04, (byte)0x00); // Option/Alt modifier only
+                            if (i < 4) Thread.sleep(120);
+                        }
+                        sentAny = true;
+                        continue;
+                    }
+
+                    if ("CLICK_MOUSEKEYS_OFF".equalsIgnoreCase(token)) {
+                        sendNamedKey("KP5");
+                        Thread.sleep(300);
+                        for (int i = 0; i < 5; i++) {
+                            press((byte)0x04, (byte)0x00);
+                            if (i < 4) Thread.sleep(120);
+                        }
                         sentAny = true;
                         continue;
                     }
