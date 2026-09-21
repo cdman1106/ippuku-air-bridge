@@ -634,14 +634,16 @@ public class BridgeService extends Service {
 
         // 伝票保存後はフォーカスが検索入力欄から外れる。
         // 実機確認済み：Tab×7 → Space で次の商品番号を入力できる状態へ戻る。
-        Thread.sleep(1400);
+        // 保存直後はAirレジ側の画面更新が間に合わない場合があるため、
+        // 画面が落ち着くまで十分待ってから、ゆっくりフォーカスを戻す。
+        Thread.sleep(3500);
         for (int i = 0; i < 7; i++) {
             sendNamedKey("TAB");
-            Thread.sleep(420);
+            Thread.sleep(650);
         }
-        Thread.sleep(350);
-        sendNamedKey("SPACE");
         Thread.sleep(700);
+        sendNamedKey("SPACE");
+        Thread.sleep(1200);
     }
 
     private void pollBridgeQueue() {
