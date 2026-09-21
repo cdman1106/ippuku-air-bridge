@@ -65,6 +65,7 @@ public class BridgeService extends Service {
     private static final String KEY_AUTO_BRIDGE = "auto_bridge_enabled";
     private static final String KEY_NEEDS_NEXT_PREP = "needs_next_order_prep";
     private static final String KEY_PRODUCT_SELECT_TABS = "product_select_tabs";
+    private static final String KEY_LEARNED_FLOW = "learned_airregi_flow";
     private static final String BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -618,8 +619,16 @@ public class BridgeService extends Service {
         // 商品候補の描画とフルキーボードアクセスのフォーカス確定待ち
         Thread.sleep(1400);
 
-        // 商品タイルまでのTab回数はAirレジのフォーカス位置で変わるため設定可能。
-        // 現在の実機確認では3回だと最初の商品を通り越したため、既定値は2回。
+        // 学習済み操作があれば、候補表示後から一時保存まで
+        // ユーザーが実機で成功させたキー順序・待ち時間をそのまま再生する。
+        String learned = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_LEARNED_FLOW, "").trim();
+        if (!learned.isEmpty()) {
+            runLearnedFlowInternal(learned);
+            return;
+        }
+
+        // 学習前のフォールバック。商品選択Tab回数のみ調整可能。
         int productSelectTabs = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getInt(KEY_PRODUCT_SELECT_TABS, 2);
         productSelectTabs = Math.max(0, Math.min(8, productSelectTabs));
@@ -630,10 +639,9 @@ public class BridgeService extends Service {
         Thread.sleep(350);
         sendNamedKey("SPACE");
 
-        // 商品追加後の画面更新待ち
         Thread.sleep(1400);
 
-        // 実機で成功確認済み：Tab×3 → Space = 伝票保存
+        // 伝票一時保存は従来の確認済み経路。
         for (int i = 0; i < 3; i++) {
             sendNamedKey("TAB");
             Thread.sleep(420);
@@ -641,6 +649,29 @@ public class BridgeService extends Service {
         Thread.sleep(350);
         sendNamedKey("SPACE");
 
+    }
+
+    private void runLearnedFlowInternal(String macro) throws Exception {
+        String[] tokens = macro.split(",");
+        for (String raw : tokens) {
+            String token = raw.trim().toUpperCase();
+            if (token.isEmpty()) continue;
+
+            if (token.startsWith("WAIT:")) {
+                long ms = Long.parseLong(token.substring(5));
+                ms = Math.max(80, Math.min(5000, ms));
+                Thread.sleep(ms);
+                continue;
+            }
+
+            // 学習再生では安全上、フォーカス移動と決定だけ許可。
+            if ("TAB".equals(token) || "SHIFT_TAB".equals(token) || "SPACE".equals(token)) {
+                sendNamedKey(token);
+                continue;
+            }
+
+            throw new IllegalArgumentException("unsupported learned token: " + token);
+        }
     }
 
     private void prepareNextOrderManually() {
