@@ -55,6 +55,7 @@ public class BridgeService extends Service {
     public static final String ACTION_RUN_FULL_FLOW = "jp.ippuku.airbridge.RUN_FULL_FLOW";
     public static final String ACTION_SET_AUTO_BRIDGE = "jp.ippuku.airbridge.SET_AUTO_BRIDGE";
     public static final String ACTION_PREPARE_NEXT_ORDER = "jp.ippuku.airbridge.PREPARE_NEXT_ORDER";
+    public static final String ACTION_TEST_BRIDGE_API = "jp.ippuku.airbridge.TEST_BRIDGE_API";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
@@ -69,7 +70,8 @@ public class BridgeService extends Service {
     private static final String KEY_NEEDS_NEXT_PREP = "needs_next_order_prep";
     private static final String KEY_PRODUCT_SELECT_TABS = "product_select_tabs";
     private static final String KEY_LEARNED_FLOW = "learned_airregi_flow";
-    private static final String BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
+    private static final String KEY_BRIDGE_BASE_URL = "bridge_api_base_url";
+    private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
@@ -243,6 +245,8 @@ public class BridgeService extends Service {
                 }
             } else if (ACTION_PREPARE_NEXT_ORDER.equals(action)) {
                 prepareNextOrderManually();
+            } else if (ACTION_TEST_BRIDGE_API.equals(action)) {
+                testBridgeApi();
             }
         }
         return START_STICKY;
@@ -794,7 +798,7 @@ public class BridgeService extends Service {
                 JSONObject body = new JSONObject();
                 body.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
                 body.put("multiItemLearned", getLearnedOrderTemplate() != null);
-                JSONObject response = httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/claim", body);
+                JSONObject response = httpJson("POST", bridgeBaseUrl() + "/api/bridge/claim", body);
 
                 if (!response.optBoolean("ok", false)) {
                     bridgeBusy.set(false);
@@ -878,7 +882,7 @@ public class BridgeService extends Service {
                             try {
                                 JSONObject done = new JSONObject();
                                 done.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
-                                httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/orders/" + orderId + "/complete", done);
+                                httpJson("POST", bridgeBaseUrl() + "/api/bridge/orders/" + orderId + "/complete", done);
                                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                                         .putBoolean(KEY_NEEDS_NEXT_PREP, true).apply();
                                 lastBridgeNotice = "";
@@ -897,7 +901,7 @@ public class BridgeService extends Service {
                                 JSONObject failed = new JSONObject();
                                 failed.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
                                 failed.put("error", e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()));
-                                httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/orders/" + orderId + "/error", failed);
+                                httpJson("POST", bridgeBaseUrl() + "/api/bridge/orders/" + orderId + "/error", failed);
                             } catch (Exception reportError) {
                                 Log.e(TAG, "bridge error report failed", reportError);
                             } finally {
@@ -911,6 +915,33 @@ public class BridgeService extends Service {
                 Log.e(TAG, "bridge poll failed", e);
                 bridgeBusy.set(false);
                 publishBridgeNotice("自動注文：Cloudflare接続待ち");
+            }
+        });
+    }
+
+    private String bridgeBaseUrl() {
+        String url = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_BRIDGE_BASE_URL, DEFAULT_BRIDGE_BASE_URL);
+        if (url == null) url = DEFAULT_BRIDGE_BASE_URL;
+        url = url.trim();
+        while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+        if (!url.startsWith("https://")) return DEFAULT_BRIDGE_BASE_URL;
+        return url;
+    }
+
+    private void testBridgeApi() {
+        network.execute(() -> {
+            String base = bridgeBaseUrl();
+            try {
+                JSONObject response = httpJson("GET", base + "/api/bridge/status", null);
+                if (response.optBoolean("ok", false)) {
+                    publish("Bridge API接続OK：" + base);
+                } else {
+                    publish("Bridge API応答あり・エラー：" + base);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "bridge api test failed", e);
+                publish("Bridge API接続失敗：" + base);
             }
         });
     }
