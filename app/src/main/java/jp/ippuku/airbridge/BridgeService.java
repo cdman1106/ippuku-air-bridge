@@ -51,31 +51,16 @@ public class BridgeService extends Service {
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
 
-    // Composite HID: Report ID 1 = keyboard, Report ID 2 = relative mouse.
-    private static final int KEYBOARD_REPORT_ID = 1;
-    private static final int MOUSE_REPORT_ID = 2;
+    // Proven keyboard-only HID descriptor. Airレジ検索との互換性を優先。
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
-            // Keyboard
             0x05,0x01,0x09,0x06,(byte)0xA1,0x01,
-            (byte)0x85,0x01,
             0x05,0x07,0x19,(byte)0xE0,0x29,(byte)0xE7,
             0x15,0x00,0x25,0x01,0x75,0x01,(byte)0x95,0x08,(byte)0x81,0x02,
             (byte)0x95,0x01,0x75,0x08,(byte)0x81,0x01,
             (byte)0x95,0x05,0x75,0x01,0x05,0x08,0x19,0x01,0x29,0x05,
             (byte)0x91,0x02,(byte)0x95,0x01,0x75,0x03,(byte)0x91,0x01,
             (byte)0x95,0x06,0x75,0x08,0x15,0x00,0x25,0x65,0x05,0x07,
-            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0,
-
-            // Mouse: buttons + X/Y + wheel
-            0x05,0x01,0x09,0x02,(byte)0xA1,0x01,
-            (byte)0x85,0x02,
-            0x09,0x01,(byte)0xA1,0x00,
-            0x05,0x09,0x19,0x01,0x29,0x03,
-            0x15,0x00,0x25,0x01,(byte)0x95,0x03,0x75,0x01,(byte)0x81,0x02,
-            (byte)0x95,0x01,0x75,0x05,(byte)0x81,0x01,
-            0x05,0x01,0x09,0x30,0x09,0x31,0x09,0x38,
-            0x15,(byte)0x81,0x25,0x7F,0x75,0x08,(byte)0x95,0x03,(byte)0x81,0x06,
-            (byte)0xC0,(byte)0xC0
+            0x19,0x00,0x29,0x65,(byte)0x81,0x00,(byte)0xC0
     };
 
     private BluetoothAdapter adapter;
@@ -256,9 +241,9 @@ public class BridgeService extends Service {
 
         BluetoothHidDeviceAppSdpSettings sdp = new BluetoothHidDeviceAppSdpSettings(
                 "いっぷく Air Bridge",
-                "Keyboard + Mouse",
+                "Barcode Scanner",
                 "ippuku",
-                BluetoothHidDevice.SUBCLASS1_COMBO,
+                BluetoothHidDevice.SUBCLASS1_KEYBOARD,
                 REPORT_DESCRIPTOR
         );
 
@@ -475,28 +460,6 @@ public class BridgeService extends Service {
                         continue;
                     }
 
-                    if ("MOUSE_HOME".equalsIgnoreCase(token)) {
-                        mouseHome();
-                        sentAny = true;
-                        continue;
-                    }
-
-                    if ("CLICK".equalsIgnoreCase(token)) {
-                        mouseClick();
-                        sentAny = true;
-                        continue;
-                    }
-
-                    if (token.toUpperCase().startsWith("MOVE:")) {
-                        String[] xy = token.substring(5).split(":");
-                        if (xy.length != 2) throw new IllegalArgumentException("MOVE requires x:y");
-                        int dx = Math.max(-3000, Math.min(3000, Integer.parseInt(xy[0].trim())));
-                        int dy = Math.max(-3000, Math.min(3000, Integer.parseInt(xy[1].trim())));
-                        moveMouseBy(dx, dy);
-                        sentAny = true;
-                        continue;
-                    }
-
                     if ("CLEAR".equalsIgnoreCase(token)) {
                         Log.i(TAG, "MACRO clear field");
                         sendNamedKey("CMD_A");
@@ -528,43 +491,6 @@ public class BridgeService extends Service {
                 publish("マクロ送信失敗" + (sentAny ? "（途中まで送信済み）" : ""));
             }
         });
-    }
-
-    private void mouseHome() throws Exception {
-        for (int i = 0; i < 14; i++) {
-            sendMouseDelta(-127, -127);
-            Thread.sleep(12);
-        }
-    }
-
-    private void moveMouseBy(int dx, int dy) throws Exception {
-        int x = dx;
-        int y = dy;
-        while (x != 0 || y != 0) {
-            int sx = Math.max(-127, Math.min(127, x));
-            int sy = Math.max(-127, Math.min(127, y));
-            sendMouseDelta(sx, sy);
-            x -= sx;
-            y -= sy;
-            Thread.sleep(12);
-        }
-    }
-
-    private void sendMouseDelta(int dx, int dy) throws Exception {
-        byte[] report = new byte[] {0x00, (byte)dx, (byte)dy, 0x00};
-        if (!hid.sendReport(target, MOUSE_REPORT_ID, report))
-            throw new IllegalStateException("mouse move failed");
-    }
-
-    private void mouseClick() throws Exception {
-        byte[] down = new byte[] {0x01,0x00,0x00,0x00};
-        byte[] up = new byte[] {0x00,0x00,0x00,0x00};
-        if (!hid.sendReport(target, MOUSE_REPORT_ID, down))
-            throw new IllegalStateException("mouse down failed");
-        Thread.sleep(70);
-        if (!hid.sendReport(target, MOUSE_REPORT_ID, up))
-            throw new IllegalStateException("mouse up failed");
-        Thread.sleep(70);
     }
 
     private void typeAscii(String text) throws Exception {
@@ -612,20 +538,19 @@ public class BridgeService extends Service {
 
     private void typeBarcode(String code) throws Exception {
         typeDigits(code);
-
-        // 実機では、文字入力直後のReturnはAirレジ側で取りこぼすことがある。
-        // 十分な待機後にReturnを1回だけ送り、後続操作と混同しないようにする。
-        Thread.sleep(2500);
+        Thread.sleep(1800);
         press((byte)0x28); // Enter / Return
-        Thread.sleep(600);
-        press((byte)0x28); // 実機では2回目で商品候補表示が安定
+        Thread.sleep(1500);
+        press((byte)0x28); // 実機で確認済みの2回目
     }
 
     private void typeDigits(String code) throws Exception {
+        // Airレジの検索欄フォーカス確定を待つ。先頭桁の取りこぼし防止。
+        Thread.sleep(700);
         for (int i=0;i<code.length();i++) {
             Key k = keyForDigit(code.charAt(i));
             press(k.code);
-            Thread.sleep(35);
+            Thread.sleep(70);
         }
     }
 
@@ -639,10 +564,10 @@ public class BridgeService extends Service {
         down[2] = keyCode;
         byte[] up = new byte[8];
 
-        if (!hid.sendReport(target, KEYBOARD_REPORT_ID, down)) throw new IllegalStateException("key down failed");
-        Thread.sleep(45);
-        if (!hid.sendReport(target, KEYBOARD_REPORT_ID, up)) throw new IllegalStateException("key up failed");
-        Thread.sleep(45);
+        if (!hid.sendReport(target, 0, down)) throw new IllegalStateException("key down failed");
+        Thread.sleep(55);
+        if (!hid.sendReport(target, 0, up)) throw new IllegalStateException("key up failed");
+        Thread.sleep(55);
     }
 
     private Key keyForDigit(char c) {
