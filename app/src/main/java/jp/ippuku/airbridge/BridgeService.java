@@ -39,6 +39,7 @@ public class BridgeService extends Service {
     public static final String ACTION_SEND_KEY_SEQUENCE = "jp.ippuku.airbridge.SEND_KEY_SEQUENCE";
     public static final String ACTION_SEND_BARCODE_ONLY = "jp.ippuku.airbridge.SEND_BARCODE_ONLY";
     public static final String ACTION_SEND_MACRO = "jp.ippuku.airbridge.SEND_MACRO";
+    public static final String ACTION_RUN_FULL_FLOW = "jp.ippuku.airbridge.RUN_FULL_FLOW";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
@@ -190,6 +191,9 @@ public class BridgeService extends Service {
             } else if (ACTION_SEND_MACRO.equals(action)) {
                 String macro = intent.getStringExtra(EXTRA_MACRO);
                 if (macro != null && !macro.trim().isEmpty()) sendMacro(macro.trim());
+            } else if (ACTION_RUN_FULL_FLOW.equals(action)) {
+                String code = intent.getStringExtra(EXTRA_CODE);
+                if (code != null && !code.trim().isEmpty()) runFullFlow(code.trim());
             }
         }
         return START_STICKY;
@@ -537,6 +541,53 @@ public class BridgeService extends Service {
             }
             Thread.sleep(35);
         }
+    }
+
+    private void runFullFlow(String code) {
+        if (!code.matches("[0-9]+")) {
+            publish("実戦テスト停止：商品番号は数字のみ対応 " + code);
+            return;
+        }
+        if (!connected || target == null || hid == null) {
+            publish("実戦テスト不可：iPad未接続");
+            return;
+        }
+
+        sender.execute(() -> {
+            try {
+                publish("実戦テスト開始: " + code);
+
+                // 実機で成功確認済み：13桁入力 → Enter×2 → 商品候補表示
+                typeBarcode(code);
+
+                // 商品候補の描画とフルキーボードアクセスのフォーカス確定待ち
+                Thread.sleep(1400);
+
+                // 実機で成功確認済み：Tab×3 → Space
+                for (int i = 0; i < 3; i++) {
+                    sendNamedKey("TAB");
+                    Thread.sleep(420);
+                }
+                Thread.sleep(350);
+                sendNamedKey("SPACE");
+
+                // 商品追加後の画面更新待ち
+                Thread.sleep(1400);
+
+                // 実機で成功確認済み：Tab×3 → Space = 伝票保存
+                for (int i = 0; i < 3; i++) {
+                    sendNamedKey("TAB");
+                    Thread.sleep(420);
+                }
+                Thread.sleep(350);
+                sendNamedKey("SPACE");
+
+                publish("実戦テスト完了：商品追加→伝票保存まで送信 " + code);
+            } catch (Exception e) {
+                Log.e(TAG, "FULL FLOW failed code=" + code, e);
+                publish("実戦テスト失敗：" + e.getClass().getSimpleName());
+            }
+        });
     }
 
     private void sendBarcodeOnly(String code) {
