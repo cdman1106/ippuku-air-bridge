@@ -51,6 +51,7 @@ public class BridgeService extends Service {
     public static final String ACTION_SEND_MACRO = "jp.ippuku.airbridge.SEND_MACRO";
     public static final String ACTION_RUN_FULL_FLOW = "jp.ippuku.airbridge.RUN_FULL_FLOW";
     public static final String ACTION_SET_AUTO_BRIDGE = "jp.ippuku.airbridge.SET_AUTO_BRIDGE";
+    public static final String ACTION_PREPARE_NEXT_ORDER = "jp.ippuku.airbridge.PREPARE_NEXT_ORDER";
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_KEY = "key";
@@ -62,6 +63,7 @@ public class BridgeService extends Service {
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
     private static final String KEY_AUTO_BRIDGE = "auto_bridge_enabled";
+    private static final String KEY_NEEDS_NEXT_PREP = "needs_next_order_prep";
     private static final String BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -234,6 +236,8 @@ public class BridgeService extends Service {
                 } else {
                     publish("自動注文OFF：監視を停止しました。");
                 }
+            } else if (ACTION_PREPARE_NEXT_ORDER.equals(action)) {
+                prepareNextOrderManually();
             }
         }
         return START_STICKY;
@@ -632,22 +636,40 @@ public class BridgeService extends Service {
         Thread.sleep(350);
         sendNamedKey("SPACE");
 
-        // 伝票保存後はフォーカスが検索入力欄から外れる。
-        // 実機確認済み：Tab×7 → Space で次の商品番号を入力できる状態へ戻る。
-        // 保存直後はAirレジ側の画面更新が間に合わない場合があるため、
-        // 画面が落ち着くまで十分待ってから、ゆっくりフォーカスを戻す。
-        Thread.sleep(3500);
-        for (int i = 0; i < 7; i++) {
-            sendNamedKey("TAB");
-            Thread.sleep(650);
+    }
+
+    private void prepareNextOrderManually() {
+        if (!connected || target == null || hid == null) {
+            publish("次の注文準備不可：iPad未接続");
+            return;
         }
-        Thread.sleep(700);
-        sendNamedKey("SPACE");
-        Thread.sleep(1200);
+        sender.execute(() -> {
+            try {
+                publish("次の注文準備：iPad画面を確認してフォーカスを戻します…");
+                for (int i = 0; i < 7; i++) {
+                    sendNamedKey("TAB");
+                    Thread.sleep(420);
+                }
+                Thread.sleep(350);
+                sendNamedKey("SPACE");
+                Thread.sleep(700);
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(KEY_NEEDS_NEXT_PREP, false).apply();
+                lastBridgeNotice = "";
+                publish("次の注文を受け付けられる状態にしました。");
+            } catch (Exception e) {
+                Log.e(TAG, "manual next-order preparation failed", e);
+                publish("次の注文準備に失敗。自動注文は停止したままです。");
+            }
+        });
     }
 
     private void pollBridgeQueue() {
         if (!connected || target == null || hid == null) return;
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_NEEDS_NEXT_PREP, false)) {
+            publishBridgeNotice("伝票保存後の安全停止中。「次の注文準備」を押してください。");
+            return;
+        }
         if (!bridgeBusy.compareAndSet(false, true)) return;
 
         network.execute(() -> {
@@ -709,7 +731,10 @@ public class BridgeService extends Service {
                                 JSONObject done = new JSONObject();
                                 done.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
                                 httpJson("POST", BRIDGE_BASE_URL + "/api/bridge/orders/" + orderId + "/complete", done);
-                                publish("注文完了 " + seat + " / " + itemName + "：伝票保存済み");
+                                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                        .putBoolean(KEY_NEEDS_NEXT_PREP, true).apply();
+                                lastBridgeNotice = "";
+                                publish("注文完了 " + seat + " / " + itemName + "：伝票保存。安全のため次の注文は一時停止中。");
                             } catch (Exception ackError) {
                                 Log.e(TAG, "bridge completion ack failed", ackError);
                                 publish("伝票保存済み。ただしCloudflare完了通知に失敗：" + orderId);
