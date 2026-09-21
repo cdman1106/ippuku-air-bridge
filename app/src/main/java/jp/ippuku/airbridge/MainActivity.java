@@ -22,6 +22,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.view.WindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,6 +52,9 @@ public class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Air Bridge運用中はGalaxyの画面を常時点灯させる。
+        // システム側の10分タイムアウト設定に関係なく、この画面を開いている間は消灯しない。
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         buildUi();
 
         adapter = BluetoothAdapter.getDefaultAdapter();
