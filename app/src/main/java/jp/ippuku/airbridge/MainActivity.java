@@ -227,9 +227,15 @@ public class MainActivity extends Activity {
         body.addView(mouseKeysTitle);
 
         TextView mouseKeysHelp = new TextView(this);
-        mouseKeysHelp.setText("商品候補が表示された後だけ使います。iPadで 設定 → アクセシビリティ → タッチ → AssistiveTouch → マウスキー をONにしてください。検索入力は従来のキーボードHIDで安定させます。");
+        mouseKeysHelp.setText("iPadの 設定 → アクセシビリティ → タッチ → AssistiveTouch → マウスキー で「Optionキーを5回押して切り替え」を有効にしてください。マウスキー本体は普段OFFのままにします。JAN入力→商品表示の後だけOption×5でON、クリック後にOFFへ戻します。");
         mouseKeysHelp.setPadding(0, 0, 0, dp(6));
         body.addView(mouseKeysHelp);
+
+        Button mkToggle = new Button(this);
+        mkToggle.setText("① マウスキーON/OFF（Option×5）");
+        mkToggle.setMinHeight(dp(56));
+        mkToggle.setOnClickListener(v -> sendMacro("MOUSEKEYS_TOGGLE"));
+        body.addView(mkToggle);
 
         LinearLayout mkRow1 = new LinearLayout(this);
         mkRow1.setOrientation(LinearLayout.HORIZONTAL);
@@ -258,6 +264,12 @@ public class MainActivity extends Activity {
         mkRight.setOnClickListener(v -> sendKey("KP6"));
         mkRow2.addView(mkRight, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         body.addView(mkRow2);
+
+        Button mkClickOff = new Button(this);
+        mkClickOff.setText("② クリックしてマウスキーOFF");
+        mkClickOff.setMinHeight(dp(56));
+        mkClickOff.setOnClickListener(v -> sendMacro("CLICK_MOUSEKEYS_OFF"));
+        body.addView(mkClickOff);
 
         Button mkHome = new Button(this);
         mkHome.setText("ポインターを左上方向へ寄せる");
