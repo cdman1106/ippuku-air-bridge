@@ -639,29 +639,13 @@ public class BridgeService extends Service {
     }
 
     private void prepareNextOrderManually() {
-        if (!connected || target == null || hid == null) {
-            publish("次の注文準備不可：iPad未接続");
-            return;
-        }
-        sender.execute(() -> {
-            try {
-                publish("次の注文準備：iPad画面を確認してフォーカスを戻します…");
-                for (int i = 0; i < 7; i++) {
-                    sendNamedKey("TAB");
-                    Thread.sleep(420);
-                }
-                Thread.sleep(350);
-                sendNamedKey("SPACE");
-                Thread.sleep(700);
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                        .putBoolean(KEY_NEEDS_NEXT_PREP, false).apply();
-                lastBridgeNotice = "";
-                publish("次の注文を受け付けられる状態にしました。");
-            } catch (Exception e) {
-                Log.e(TAG, "manual next-order preparation failed", e);
-                publish("次の注文準備に失敗。自動注文は停止したままです。");
-            }
-        });
+        // 安全優先：ここではiPadへキーを一切送らない。
+        // スタッフがAirレジの検索欄を手動でタップした後に、
+        // Cloudflare注文キューの停止だけを解除する。
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_NEEDS_NEXT_PREP, false).apply();
+        lastBridgeNotice = "";
+        publish("次の注文受付を再開しました。Airレジの検索欄が選択されていることを確認してください。");
     }
 
     private void pollBridgeQueue() {
@@ -721,7 +705,7 @@ public class BridgeService extends Service {
                     return;
                 }
 
-                publish("注文受信 " + seat + " / " + itemName + " → Airレジ入力開始");
+                publish("注文受信 " + seat + " / " + itemName + " / コード:" + airCode + " → Airレジ入力開始");
 
                 sender.execute(() -> {
                     try {
