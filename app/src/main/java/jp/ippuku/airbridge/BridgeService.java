@@ -1066,6 +1066,16 @@ public class BridgeService extends Service {
                                     message.append(" メモ：").append(orderNote);
                                 }
                                 publish(message.toString());
+
+                                // 実機では1件目直後に次の注文へ入ると、
+                                // Airレジの伝票保存後画面がまだ落ち着かずフォーカスがずれることがある。
+                                // v0.7.1で成功した商品内キー操作は一切変更せず、
+                                // 注文と注文の間だけ十分に待ってから次のclaimを許可する。
+                                try {
+                                    Thread.sleep(6000);
+                                } catch (InterruptedException interrupted) {
+                                    Thread.currentThread().interrupt();
+                                }
                             } catch (Exception ackError) {
                                 Log.e(TAG, "bridge completion ack failed", ackError);
                                 enterSafetyStop("Airレジ伝票は保存された可能性がありますが、Cloudflare完了通知に失敗しました。途中注文を確認してください。");
