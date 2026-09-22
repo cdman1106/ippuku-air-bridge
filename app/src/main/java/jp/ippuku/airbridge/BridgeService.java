@@ -81,6 +81,7 @@ public class BridgeService extends Service {
     private static final String KEY_SAFETY_STOP_REASON = "safety_stop_reason";
     private static final String KEY_PRODUCTION_V1_MIGRATED = "production_v1_migrated";
     private static final String KEY_PRODUCTION_CUTOVER_DONE = "production_cutover_done";
+    private static final String KEY_RESUME_PRODUCTION = "resume_production_after_restart";
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -164,10 +165,15 @@ public class BridgeService extends Service {
                 target = device;
                 connected = true;
                 String name = safeName(device);
-                publish(name + " 接続済み。自動注文待機中。");
+                publish(name + " 接続済み。");
                 handler.removeCallbacks(reconnectRunnable);
                 flushPending();
                 maybeSendOneTimeTest();
+                SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+                if (p.getBoolean(KEY_RESUME_PRODUCTION, false)) {
+                    p.edit().putBoolean(KEY_RESUME_PRODUCTION, false).apply();
+                    handler.postDelayed(this::startProductionMonitoring, 600);
+                }
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 publish("注文専用iPadへ接続中…");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
@@ -228,6 +234,14 @@ public class BridgeService extends Service {
                     .apply();
         }
 
+        SharedPreferences startupPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (startupPrefs.getBoolean(KEY_AUTO_BRIDGE, false)) {
+            startupPrefs.edit()
+                    .putBoolean(KEY_AUTO_BRIDGE, false)
+                    .putBoolean(KEY_RESUME_PRODUCTION, true)
+                    .apply();
+        }
+
         adapter = BluetoothAdapter.getDefaultAdapter();
         registerReceiver(btReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
         acquireHidProfile();
@@ -270,10 +284,13 @@ public class BridgeService extends Service {
             } else if (ACTION_SET_AUTO_BRIDGE.equals(action)) {
                 boolean enabled = intent.getBooleanExtra(EXTRA_ENABLED, false);
                 if (enabled) {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putBoolean(KEY_RESUME_PRODUCTION, false).apply();
                     startProductionMonitoring();
                 } else {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+                            .putBoolean(KEY_AUTO_BRIDGE, false)
+                            .putBoolean(KEY_RESUME_PRODUCTION, false).apply();
                     publish("本番運用OFF：新規注文の自動入力を停止しました。");
                 }
             } else if (ACTION_PREPARE_NEXT_ORDER.equals(action)) {
@@ -865,6 +882,7 @@ public class BridgeService extends Service {
                 .putBoolean(KEY_SAFETY_STOP, true)
                 .putString(KEY_SAFETY_STOP_REASON, safeReason)
                 .putBoolean(KEY_AUTO_BRIDGE, false)
+                .putBoolean(KEY_RESUME_PRODUCTION, false)
                 .apply();
         lastBridgeNotice = "";
         publish("【異常停止】" + safeReason + " 自動で次の注文には進みません。");
