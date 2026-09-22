@@ -82,7 +82,6 @@ public class BridgeService extends Service {
     private static final String KEY_PRODUCTION_V1_MIGRATED = "production_v1_migrated";
     private static final String KEY_PRODUCTION_CUTOVER_DONE = "production_cutover_done";
     private static final String KEY_RESUME_PRODUCTION = "resume_production_after_restart";
-    private static final String KEY_CONTINUATION_FOCUS = "continuation_focus_expected";
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -236,9 +235,6 @@ public class BridgeService extends Service {
         }
 
         SharedPreferences startupPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        // プロセス再起動・APK上書き後はAirレジのFKAフォーカス位置を信用しない。
-        // 必ず「1件目の基準位置」から開始し、正常保存後だけ連続注文補正へ移る。
-        startupPrefs.edit().putBoolean(KEY_CONTINUATION_FOCUS, false).apply();
         if (startupPrefs.getBoolean(KEY_AUTO_BRIDGE, false)) {
             startupPrefs.edit()
                     .putBoolean(KEY_AUTO_BRIDGE, false)
@@ -290,7 +286,6 @@ public class BridgeService extends Service {
                 if (enabled) {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                             .putBoolean(KEY_RESUME_PRODUCTION, false)
-                            .putBoolean(KEY_CONTINUATION_FOCUS, false)
                             .apply();
                     startProductionMonitoring();
                 } else {
@@ -745,9 +740,6 @@ public class BridgeService extends Service {
 
     private void runOrderItemsFlow(JSONArray items) throws Exception {
         LearnedOrderTemplate learned = getLearnedOrderTemplate();
-        boolean continuationFocus = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(KEY_CONTINUATION_FOCUS, false);
-
         if (items.length() > 1 && learned == null) {
             throw new IllegalStateException("MULTI_ITEM_TEMPLATE_REQUIRED");
         }
@@ -777,13 +769,10 @@ public class BridgeService extends Service {
                     ? learned.betweenItems
                     : learned.finalItem;
 
-            if (i == 0 && continuationFocus) {
-                // 連続2伝票目以降の1商品目：
-                // 実機で「初回用3 Tabは通り越す」「0 Tabは商品が入らない」を確認。
-                // 同一伝票の2商品目以降で成功済みの補正と同じく、1 Tabだけ減らす。
-                phaseMacro = adjustAdditionalItemProductSelection(phaseMacro);
-            } else if (i > 0) {
-                // 同一伝票の2商品目以降は、実機確認済みの1 Tab補正を維持。
+            if (i > 0) {
+                // 同一伝票の2商品目以降だけ、実機確認済みの1 Tab補正を使う。
+                // 伝票を保存した最後の記録に「次の商品番号入力位置へ戻す」操作まで
+                // 含まれているため、次伝票の1商品目は初回と同じ記録をそのまま再生する。
                 phaseMacro = adjustAdditionalItemProductSelection(phaseMacro);
             }
 
@@ -894,7 +883,6 @@ public class BridgeService extends Service {
                 .putString(KEY_SAFETY_STOP_REASON, safeReason)
                 .putBoolean(KEY_AUTO_BRIDGE, false)
                 .putBoolean(KEY_RESUME_PRODUCTION, false)
-                .putBoolean(KEY_CONTINUATION_FOCUS, false)
                 .apply();
         lastBridgeNotice = "";
         publish("【異常停止】" + safeReason + " 自動で次の注文には進みません。");
@@ -905,7 +893,6 @@ public class BridgeService extends Service {
                 .putBoolean(KEY_SAFETY_STOP, false)
                 .putBoolean(KEY_NEEDS_NEXT_PREP, false)
                 .remove(KEY_SAFETY_STOP_REASON)
-                .putBoolean(KEY_CONTINUATION_FOCUS, false)
                 .putBoolean(KEY_AUTO_BRIDGE, true)
                 .apply();
         lastBridgeNotice = "";
@@ -1063,8 +1050,6 @@ public class BridgeService extends Service {
                                     throw new IllegalStateException("COMPLETE_ACK_" + ack.optString("error", "FAILED"));
                                 }
 
-                                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                                        .putBoolean(KEY_CONTINUATION_FOCUS, true).apply();
                                 lastBridgeNotice = "";
                                 StringBuilder message = new StringBuilder();
                                 message.append("【正常稼働】注文完了 ")
@@ -1099,8 +1084,6 @@ public class BridgeService extends Service {
                             }
                         });
                     } catch (Exception e) {
-                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                                .putBoolean(KEY_CONTINUATION_FOCUS, false).apply();
                         Log.e(TAG, "auto bridge UI flow failed", e);
                         network.execute(() -> {
                             try {
@@ -1147,10 +1130,6 @@ public class BridgeService extends Service {
     }
 
     private void startProductionMonitoring() {
-        // 本番開始/再開時は必ず初回注文用フォーカスとして扱う。
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean(KEY_CONTINUATION_FOCUS, false).apply();
-
         if (!connected || target == null || hid == null) {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_AUTO_BRIDGE, false).apply();
