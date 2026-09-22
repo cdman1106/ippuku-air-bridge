@@ -77,6 +77,9 @@ public class BridgeService extends Service {
     private static final String KEY_BRIDGE_API_TOKEN = "bridge_api_token";
     private static final String KEY_BRIDGE_SESSION_READY = "bridge_session_ready";
     private static final String KEY_LAST_RECOVERY_ORDER_ID = "last_recovery_order_id";
+    private static final String KEY_SAFETY_STOP = "safety_stop";
+    private static final String KEY_SAFETY_STOP_REASON = "safety_stop_reason";
+    private static final String KEY_PRODUCTION_V1_MIGRATED = "production_v1_migrated";
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -168,14 +171,22 @@ public class BridgeService extends Service {
                 publish("注文専用iPadへ接続中…");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 connected = false;
-                publish("iPad切断。5秒後に自動再接続します…");
+                if (bridgeBusy.get()) {
+                    enterSafetyStop("注文処理中にiPadとのBluetoothが切断されました。Airレジ画面を確認してください。");
+                } else {
+                    publish("iPad切断。5秒後に自動再接続します…");
+                }
                 scheduleReconnect();
             }
         }
 
         @Override public void onVirtualCableUnplug(BluetoothDevice device) {
             connected = false;
-            publish("iPad側から切断されました。自動再接続します…");
+            if (bridgeBusy.get()) {
+                enterSafetyStop("注文処理中にiPad側からBluetooth切断されました。Airレジ画面を確認してください。");
+            } else {
+                publish("iPad側から切断されました。自動再接続します…");
+            }
             scheduleReconnect();
         }
     };
@@ -190,7 +201,11 @@ public class BridgeService extends Service {
             } else if (state == BluetoothAdapter.STATE_OFF) {
                 connected = false;
                 appRegistered = false;
-                publish("BluetoothがOFFです。");
+                if (bridgeBusy.get()) {
+                    enterSafetyStop("注文処理中にBluetoothがOFFになりました。Airレジ画面を確認してください。");
+                } else {
+                    publish("BluetoothがOFFです。");
+                }
             }
         }
     };
@@ -199,6 +214,17 @@ public class BridgeService extends Service {
         super.onCreate();
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("起動中…"));
+
+        SharedPreferences migrationPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!migrationPrefs.getBoolean(KEY_PRODUCTION_V1_MIGRATED, false)) {
+            migrationPrefs.edit()
+                    .putBoolean(KEY_AUTO_BRIDGE, false)
+                    .putBoolean(KEY_NEEDS_NEXT_PREP, false)
+                    .putBoolean(KEY_SAFETY_STOP, false)
+                    .remove(KEY_SAFETY_STOP_REASON)
+                    .putBoolean(KEY_PRODUCTION_V1_MIGRATED, true)
+                    .apply();
+        }
 
         adapter = BluetoothAdapter.getDefaultAdapter();
         registerReceiver(btReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
@@ -241,19 +267,12 @@ public class BridgeService extends Service {
                 if (code != null && !code.trim().isEmpty()) runFullFlow(code.trim());
             } else if (ACTION_SET_AUTO_BRIDGE.equals(action)) {
                 boolean enabled = intent.getBooleanExtra(EXTRA_ENABLED, false);
-                SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
-                boolean wasEnabled = p.getBoolean(KEY_AUTO_BRIDGE, false);
-                p.edit().putBoolean(KEY_AUTO_BRIDGE, enabled).apply();
                 if (enabled) {
-                    if (!wasEnabled) {
-                        p.edit().putBoolean(KEY_BRIDGE_SESSION_READY, false).apply();
-                        startBridgeSessionAsync();
-                    }
-                    publish("自動注文ON：開始後の新規注文だけ監視します。");
-                    handler.removeCallbacks(bridgePollRunnable);
-                    handler.post(bridgePollRunnable);
+                    startProductionMonitoring();
                 } else {
-                    publish("自動注文OFF：監視を停止しました。");
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+                    publish("本番運用OFF：新規注文の自動入力を停止しました。");
                 }
             } else if (ACTION_PREPARE_NEXT_ORDER.equals(action)) {
                 prepareNextOrderManually();
@@ -838,20 +857,40 @@ public class BridgeService extends Service {
         }
     }
 
-    private void prepareNextOrderManually() {
-        // 安全優先：ここではiPadへキーを一切送らない。
-        // スタッフがAirレジの検索欄を手動でタップした後に、
-        // Cloudflare注文キューの停止だけを解除する。
+    private void enterSafetyStop(String reason) {
+        String safeReason = reason == null ? "原因不明の安全停止" : reason.trim();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean(KEY_NEEDS_NEXT_PREP, false).apply();
+                .putBoolean(KEY_SAFETY_STOP, true)
+                .putString(KEY_SAFETY_STOP_REASON, safeReason)
+                .putBoolean(KEY_AUTO_BRIDGE, false)
+                .apply();
         lastBridgeNotice = "";
-        publish("次の注文受付を再開しました。Airレジが商品番号入力位置になっていることを確認してください。");
+        publish("【異常停止】" + safeReason + " 自動で次の注文には進みません。");
+    }
+
+    private void clearSafetyStopAndResume(String message) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_SAFETY_STOP, false)
+                .putBoolean(KEY_NEEDS_NEXT_PREP, false)
+                .remove(KEY_SAFETY_STOP_REASON)
+                .putBoolean(KEY_AUTO_BRIDGE, true)
+                .apply();
+        lastBridgeNotice = "";
+        publish(message);
+        handler.removeCallbacks(bridgePollRunnable);
+        handler.postDelayed(bridgePollRunnable, 800);
+    }
+
+    private void prepareNextOrderManually() {
+        // 異常時の復旧専用。iPadへキーは送らず、監視停止だけ解除する。
+        clearSafetyStopAndResume("異常停止を解除しました。Airレジが商品番号入力位置であることを確認済みとして受付を再開します。");
     }
 
     private void pollBridgeQueue() {
         if (!connected || target == null || hid == null) return;
-        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_NEEDS_NEXT_PREP, false)) {
-            publishBridgeNotice("伝票保存後の安全停止中。「次の注文準備」を押してください。");
+        SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (p.getBoolean(KEY_SAFETY_STOP, false)) {
+            publishBridgeNotice("【異常停止中】" + p.getString(KEY_SAFETY_STOP_REASON, "Airレジ画面を確認してください。"));
             return;
         }
         if (!bridgeBusy.compareAndSet(false, true)) return;
@@ -866,7 +905,12 @@ public class BridgeService extends Service {
 
                 if (!response.optBoolean("ok", false)) {
                     bridgeBusy.set(false);
-                    publishBridgeNotice("自動注文：Cloudflare応答エラー");
+                    String error = response.optString("error", "");
+                    if ("UNAUTHORIZED".equals(error) || "INVALID_BRIDGE_TOKEN".equals(error)) {
+                        enterSafetyStop("Bridge認証エラー。認証キーを確認してください。");
+                    } else {
+                        publishBridgeNotice("自動注文：Cloudflare接続待ち");
+                    }
                     return;
                 }
 
@@ -876,21 +920,25 @@ public class BridgeService extends Service {
                         String name = "";
                         if (response.optJSONArray("missingMappings") != null &&
                                 response.optJSONArray("missingMappings").length() > 0) {
-                            name = response.optJSONArray("missingMappings")
-                                    .optJSONObject(0).optString("displayName", "");
+                            JSONObject missing = response.optJSONArray("missingMappings").optJSONObject(0);
+                            if (missing != null) name = missing.optString("displayName", "");
                         }
-                        publishBridgeNotice("自動注文待機：Airレジ商品番号未登録 " + name);
+                        bridgeBusy.set(false);
+                        enterSafetyStop("Airレジ商品番号未登録：" + name);
                     } else if ("MULTI_ITEM_TEMPLATE_REQUIRED".equals(reason)) {
-                        publishBridgeNotice("自動注文待機：複数商品用の実機記録が必要です。");
+                        bridgeBusy.set(false);
+                        enterSafetyStop("複数商品用の成功操作記録が見つかりません。");
                     } else if ("TOO_MANY_ITEMS".equals(reason)) {
-                        publishBridgeNotice("自動注文待機：1伝票の商品数が多すぎます。");
+                        bridgeBusy.set(false);
+                        enterSafetyStop("1伝票の商品数が20点を超えています。");
                     } else if ("SESSION_START_REQUIRED".equals(reason)) {
-                        publishBridgeNotice("安全開始位置を登録中…");
+                        bridgeBusy.set(false);
+                        publishBridgeNotice("本番開始位置を確認中…");
                         startBridgeSessionAsync();
                     } else {
-                        publishBridgeNotice("自動注文待機：" + reason);
+                        bridgeBusy.set(false);
+                        enterSafetyStop("注文を処理できません：" + reason);
                     }
-                    bridgeBusy.set(false);
                     return;
                 }
 
@@ -913,7 +961,7 @@ public class BridgeService extends Service {
 
                 if (orderId.isEmpty() || items == null || items.length() == 0) {
                     bridgeBusy.set(false);
-                    publishBridgeNotice("自動注文：受信データ不正");
+                    enterSafetyStop("Cloudflareから受信した注文データが不正です。");
                     return;
                 }
 
@@ -932,7 +980,7 @@ public class BridgeService extends Service {
                 }
                 if (!validItems) {
                     bridgeBusy.set(false);
-                    publishBridgeNotice("自動注文：商品コード受信データ不正");
+                    enterSafetyStop("商品番号データが不正です。");
                     return;
                 }
 
@@ -940,23 +988,41 @@ public class BridgeService extends Service {
                 final String itemSummary = orderItems.length() == 1
                         ? firstItemName
                         : firstItemName + " ほか" + (orderItems.length() - 1) + "点";
+                final int nightFee = Math.max(0, order.optInt("nightFee", 0));
+                String rawNote = order.optString("note", "").replace("\n", " ").replace("\r", " ").trim();
+                final String orderNote = rawNote.length() > 80 ? rawNote.substring(0, 80) + "…" : rawNote;
                 publish("注文受信 " + seat + " / " + itemSummary + " / " + orderItems.length() + "商品 → Airレジ入力開始");
 
                 sender.execute(() -> {
                     try {
+                        // ここはv0.7.1で実機成功済みのキー操作。順序・待ち時間は変更しない。
                         runOrderItemsFlow(orderItems);
                         network.execute(() -> {
                             try {
                                 JSONObject done = new JSONObject();
                                 done.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
-                                httpJson("POST", bridgeBaseUrl() + "/api/bridge/orders/" + orderId + "/complete", done);
-                                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                                        .putBoolean(KEY_NEEDS_NEXT_PREP, true).apply();
+                                JSONObject ack = httpJson("POST",
+                                        bridgeBaseUrl() + "/api/bridge/orders/" + orderId + "/complete", done);
+                                if (!ack.optBoolean("ok", false)) {
+                                    throw new IllegalStateException("COMPLETE_ACK_" + ack.optString("error", "FAILED"));
+                                }
+
                                 lastBridgeNotice = "";
-                                publish("注文完了 " + seat + " / " + itemSummary + "：伝票保存。次の注文位置まで記録再生済み。画面確認後に次の注文を許可してください。");
+                                StringBuilder message = new StringBuilder();
+                                message.append("【正常稼働】注文完了 ")
+                                        .append(seat).append(" / ").append(itemSummary)
+                                        .append("：同一伝票へ一時保存済み。次の注文を自動待機します。");
+                                if (nightFee > 0) {
+                                    message.append(" 会計時に深夜料金 ¥").append(nightFee)
+                                            .append(" をメインiPadで加算してください。");
+                                }
+                                if (!orderNote.isEmpty()) {
+                                    message.append(" メモ：").append(orderNote);
+                                }
+                                publish(message.toString());
                             } catch (Exception ackError) {
                                 Log.e(TAG, "bridge completion ack failed", ackError);
-                                publish("伝票保存済み。ただしCloudflare完了通知に失敗：" + orderId);
+                                enterSafetyStop("Airレジ伝票は保存された可能性がありますが、Cloudflare完了通知に失敗しました。途中注文を確認してください。");
                             } finally {
                                 bridgeBusy.set(false);
                             }
@@ -973,7 +1039,7 @@ public class BridgeService extends Service {
                                 Log.e(TAG, "bridge error report failed", reportError);
                             } finally {
                                 bridgeBusy.set(false);
-                                publish("自動注文停止扱い：" + seat + " / " + itemSummary + "（重複防止のため自動再試行しません）");
+                                enterSafetyStop("Airレジ入力が途中で停止しました：" + seat + " / " + itemSummary + "。重複防止のため自動再試行しません。");
                             }
                         });
                     }
@@ -996,13 +1062,97 @@ public class BridgeService extends Service {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                             .putBoolean(KEY_BRIDGE_SESSION_READY, true).apply();
                     lastBridgeNotice = "";
-                    publish("安全監視開始：この時点より後の注文だけ受け付けます。");
+                    publishBridgeNotice("本番開始位置OK。注文待機中。");
                 } else {
-                    publish("安全監視開始に失敗。自動入力は開始しません。");
+                    enterSafetyStop("本番開始位置を登録できません。");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "bridge session start failed", e);
-                publish("安全監視開始に失敗。Cloudflare接続を確認してください。");
+                enterSafetyStop("本番開始位置の確認に失敗しました。Cloudflare接続を確認してください。");
+            }
+        });
+    }
+
+    private void startProductionMonitoring() {
+        if (!connected || target == null || hid == null) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+            publish("本番運用を開始できません：注文専用iPadとBluetooth接続してください。");
+            return;
+        }
+        if (getLearnedOrderTemplate() == null) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+            publish("本番運用を開始できません：実機で成功した複数商品操作記録がありません。");
+            return;
+        }
+
+        String token = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_BRIDGE_API_TOKEN, "");
+        if (token == null || token.trim().isEmpty()) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+            publish("本番運用を開始できません：Bridge認証キーを保存してください。");
+            return;
+        }
+
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+        publish("本番セルフチェック中：iPad / 操作記録 / Bridge / 未完了注文を確認します…");
+
+        network.execute(() -> {
+            try {
+                JSONObject activated = httpJson("POST",
+                        bridgeBaseUrl() + "/api/bridge/auth/activate", new JSONObject());
+                if (!activated.optBoolean("ok", false)) {
+                    throw new IllegalStateException("AUTH_" + activated.optString("error", "FAILED"));
+                }
+
+                JSONObject sessionBody = new JSONObject();
+                sessionBody.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                JSONObject session = httpJson("POST",
+                        bridgeBaseUrl() + "/api/bridge/session/start", sessionBody);
+                if (!session.optBoolean("ok", false)) {
+                    throw new IllegalStateException("SESSION_" + session.optString("error", "FAILED"));
+                }
+
+                JSONObject recovery = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery", null);
+                JSONArray unresolved = recovery.optJSONArray("orders");
+                if (!recovery.optBoolean("ok", false) || unresolved == null) {
+                    throw new IllegalStateException("RECOVERY_CHECK_FAILED");
+                }
+                if (unresolved.length() > 0) {
+                    JSONObject first = unresolved.optJSONObject(0);
+                    if (first != null) {
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                .putString(KEY_LAST_RECOVERY_ORDER_ID, first.optString("id", ""))
+                                .apply();
+                    }
+                    enterSafetyStop("未完了の注文が " + unresolved.length() + "件あります。「途中で止まった注文を確認」から先に処理してください。");
+                    return;
+                }
+
+                JSONObject status = httpJson("GET", bridgeBaseUrl() + "/api/bridge/status", null);
+                if (!status.optBoolean("ok", false)) {
+                    throw new IllegalStateException("STATUS_" + status.optString("error", "FAILED"));
+                }
+
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(KEY_BRIDGE_SESSION_READY, true)
+                        .putBoolean(KEY_SAFETY_STOP, false)
+                        .remove(KEY_SAFETY_STOP_REASON)
+                        .putBoolean(KEY_NEEDS_NEXT_PREP, false)
+                        .putBoolean(KEY_AUTO_BRIDGE, true)
+                        .apply();
+                lastBridgeNotice = "";
+                publish("【本番運用ON】セルフチェックOK。正常終了した注文は連続で自動処理します。異常時だけ停止します。");
+                handler.removeCallbacks(bridgePollRunnable);
+                handler.postDelayed(bridgePollRunnable, 800);
+            } catch (Exception e) {
+                Log.e(TAG, "production preflight failed", e);
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(KEY_AUTO_BRIDGE, false).apply();
+                publish("本番セルフチェック失敗：" + String.valueOf(e.getMessage()));
             }
         });
     }
@@ -1077,12 +1227,11 @@ public class BridgeService extends Service {
                 if ("complete".equals(action)) {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                             .remove(KEY_LAST_RECOVERY_ORDER_ID).apply();
-                    publish("復旧完了：Airレジに存在する伝票を処理済みとして確定しました。");
+                    clearSafetyStopAndResume("復旧完了：Airレジに存在する伝票を処理済みにしました。本番運用を自動再開します。");
                 } else {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .remove(KEY_LAST_RECOVERY_ORDER_ID)
-                            .putBoolean(KEY_NEEDS_NEXT_PREP, true).apply();
-                    publish("再試行待ちに戻しました。Airレジを商品番号入力位置にしてから「次の注文を許可」を押してください。");
+                            .remove(KEY_LAST_RECOVERY_ORDER_ID).apply();
+                    clearSafetyStopAndResume("再試行を許可しました。Airレジを空の検索欄に戻した前提で、この注文から本番運用を再開します。");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "recovery action failed", e);
@@ -1163,7 +1312,9 @@ public class BridgeService extends Service {
             empty.put("status", status);
             return empty;
         }
-        return new JSONObject(text.toString());
+        JSONObject parsed = new JSONObject(text.toString());
+        parsed.put("_httpStatus", status);
+        return parsed;
     }
 
     private void sendBarcodeOnly(String code) {
