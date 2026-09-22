@@ -902,8 +902,17 @@ public class BridgeService extends Service {
     }
 
     private void prepareNextOrderManually() {
-        // 異常時の復旧専用。iPadへキーは送らず、監視停止だけ解除する。
-        clearSafetyStopAndResume("異常停止を解除しました。Airレジが商品番号入力位置であることを確認済みとして受付を再開します。");
+        // 異常時の復旧専用。キーは一切送らず、必ず本番セルフチェックを通す。
+        // processing/error が残っていれば recovery で止まるため、曖昧な注文を飛ばして
+        // 次のpendingへ進むことはない。
+        SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!p.getBoolean(KEY_SAFETY_STOP, false)) {
+            publish("異常停止していません。通常運用ではこのボタンは押す必要ありません。");
+            return;
+        }
+        p.edit().putBoolean(KEY_AUTO_BRIDGE, false).apply();
+        publish("異常停止の解除前チェックを開始します…");
+        startProductionMonitoring();
     }
 
     private void pollBridgeQueue() {
@@ -1008,6 +1017,20 @@ public class BridgeService extends Service {
                 final String itemSummary = orderItems.length() == 1
                         ? firstItemName
                         : firstItemName + " ほか" + (orderItems.length() - 1) + "点";
+                StringBuilder detailBuilder = new StringBuilder();
+                for (int i = 0; i < orderItems.length(); i++) {
+                    JSONObject detailItem = orderItems.optJSONObject(i);
+                    if (detailItem == null) continue;
+                    if (detailBuilder.length() > 0) detailBuilder.append(" / ");
+                    detailBuilder.append(detailItem.optString("displayName",
+                            detailItem.optString("name", "")));
+                    if (detailBuilder.length() > 320) {
+                        detailBuilder.setLength(320);
+                        detailBuilder.append("…");
+                        break;
+                    }
+                }
+                final String orderDetails = detailBuilder.toString();
                 final int nightFee = Math.max(0, order.optInt("nightFee", 0));
                 String rawNote = order.optString("note", "").replace("\n", " ").replace("\r", " ").trim();
                 final String orderNote = rawNote.length() > 80 ? rawNote.substring(0, 80) + "…" : rawNote;
@@ -1032,6 +1055,9 @@ public class BridgeService extends Service {
                                 message.append("【正常稼働】注文完了 ")
                                         .append(seat).append(" / ").append(itemSummary)
                                         .append("：同一伝票へ一時保存済み。次の注文を自動待機します。");
+                                if (!orderDetails.isEmpty()) {
+                                    message.append(" 内容：").append(orderDetails);
+                                }
                                 if (nightFee > 0) {
                                     message.append(" 会計時に深夜料金 ¥").append(nightFee)
                                             .append(" をメインiPadで加算してください。");
