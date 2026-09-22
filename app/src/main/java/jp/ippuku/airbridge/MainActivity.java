@@ -35,6 +35,7 @@ public class MainActivity extends Activity {
     private static final String PREFS = "bridge";
     private static final String KEY_TARGET = "target_address";
     private static final String KEY_BRIDGE_BASE_URL = "bridge_api_base_url";
+    private static final String KEY_BRIDGE_API_TOKEN = "bridge_api_token";
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
 
     private BluetoothAdapter adapter;
@@ -47,6 +48,7 @@ public class MainActivity extends Activity {
     private EditText quickTabGapMs;
     private EditText productSelectTabs;
     private EditText bridgeApiUrl;
+    private EditText bridgeApiToken;
     private EditText mouseXSteps;
     private EditText mouseYSteps;
     private TextView historyView;
@@ -110,6 +112,9 @@ public class MainActivity extends Activity {
             String url = normalizeBridgeUrl(bridgeApiUrl.getText().toString());
             if (!url.isEmpty()) e.putString(KEY_BRIDGE_BASE_URL, url);
         }
+        if (bridgeApiToken != null) {
+            e.putString(KEY_BRIDGE_API_TOKEN, bridgeApiToken.getText().toString().trim());
+        }
         e.apply();
     }
 
@@ -123,6 +128,7 @@ public class MainActivity extends Activity {
         if (mouseXSteps != null) mouseXSteps.setText(p.getString("mouse_x_steps", "10"));
         if (mouseYSteps != null) mouseYSteps.setText(p.getString("mouse_y_steps", "10"));
         if (bridgeApiUrl != null) bridgeApiUrl.setText(p.getString(KEY_BRIDGE_BASE_URL, DEFAULT_BRIDGE_BASE_URL));
+        if (bridgeApiToken != null) bridgeApiToken.setText(p.getString(KEY_BRIDGE_API_TOKEN, ""));
         refreshLearnedFlowView();
     }
 
@@ -199,6 +205,13 @@ public class MainActivity extends Activity {
         bridgeApiUrl.setText(DEFAULT_BRIDGE_BASE_URL);
         body.addView(bridgeApiUrl);
 
+        bridgeApiToken = new EditText(this);
+        bridgeApiToken.setSingleLine(true);
+        bridgeApiToken.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        bridgeApiToken.setHint("Bridge認証トークン（未設定なら空欄）");
+        body.addView(bridgeApiToken);
+
         LinearLayout apiRow = new LinearLayout(this);
         apiRow.setOrientation(LinearLayout.HORIZONTAL);
 
@@ -212,8 +225,11 @@ public class MainActivity extends Activity {
             }
             bridgeApiUrl.setText(url);
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putString(KEY_BRIDGE_BASE_URL, url).apply();
-            toast("Bridge API URLを保存しました。");
+                    .putString(KEY_BRIDGE_BASE_URL, url)
+                    .putString(KEY_BRIDGE_API_TOKEN,
+                            bridgeApiToken == null ? "" : bridgeApiToken.getText().toString().trim())
+                    .apply();
+            toast("Bridge API設定を保存しました。");
         });
         apiRow.addView(saveApi, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -322,6 +338,39 @@ public class MainActivity extends Activity {
         prepareHelp.setText("安全版：1件保存後は自動停止します。学習記録の最後で次の商品番号入力位置まで戻します。iPad画面を確認してから、このボタンを1回押してください。このボタン自体はTabやSpaceを送りません。");
         prepareHelp.setPadding(0, 0, 0, dp(10));
         body.addView(prepareHelp);
+
+        TextView recoveryTitle = new TextView(this);
+        recoveryTitle.setText("通信切断・途中停止の復旧");
+        recoveryTitle.setTextSize(18);
+        recoveryTitle.setPadding(0, dp(8), 0, dp(4));
+        body.addView(recoveryTitle);
+
+        Button checkRecovery = new Button(this);
+        checkRecovery.setText("途中で止まった注文を確認");
+        checkRecovery.setOnClickListener(v -> checkRecovery());
+        body.addView(checkRecovery);
+
+        LinearLayout recoveryRow = new LinearLayout(this);
+        recoveryRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button recoveryComplete = new Button(this);
+        recoveryComplete.setText("伝票あり → 完了扱い");
+        recoveryComplete.setOnClickListener(v -> recoverOrderComplete());
+        recoveryRow.addView(recoveryComplete,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button recoveryRetry = new Button(this);
+        recoveryRetry.setText("伝票なし → 再試行");
+        recoveryRetry.setOnClickListener(v -> recoverOrderRetry());
+        recoveryRow.addView(recoveryRetry,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        body.addView(recoveryRow);
+
+        TextView recoveryHelp = new TextView(this);
+        recoveryHelp.setText("必ず先にAirレジを確認します。伝票が存在する時に「再試行」を押すと重複するため、伝票ありなら完了扱いを選びます。");
+        recoveryHelp.setPadding(0, 0, 0, dp(10));
+        body.addView(recoveryHelp);
 
         TextView simpleTitle = new TextView(this);
         simpleTitle.setText("かんたんテスト");
@@ -959,6 +1008,27 @@ public class MainActivity extends Activity {
         svc.putExtra(BridgeService.EXTRA_ENABLED, enabled);
         startForegroundCompat(svc);
         toast(enabled ? "自動注文の監視を開始しました。" : "自動注文の監視を停止しました。");
+    }
+
+    private void checkRecovery() {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_CHECK_RECOVERY);
+        startForegroundCompat(svc);
+        toast("途中注文を確認します。");
+    }
+
+    private void recoverOrderComplete() {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_RECOVERY_COMPLETE);
+        startForegroundCompat(svc);
+        toast("Airレジに伝票がある注文を完了扱いにします。");
+    }
+
+    private void recoverOrderRetry() {
+        Intent svc = new Intent(this, BridgeService.class);
+        svc.setAction(BridgeService.ACTION_RECOVERY_RETRY);
+        startForegroundCompat(svc);
+        toast("Airレジに伝票が無い注文だけ再試行待ちへ戻します。");
     }
 
     private void runFullFlowTest() {
