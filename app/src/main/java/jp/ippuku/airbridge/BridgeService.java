@@ -80,6 +80,7 @@ public class BridgeService extends Service {
     private static final String KEY_SAFETY_STOP = "safety_stop";
     private static final String KEY_SAFETY_STOP_REASON = "safety_stop_reason";
     private static final String KEY_PRODUCTION_V1_MIGRATED = "production_v1_migrated";
+    private static final String KEY_PRODUCTION_CUTOVER_DONE = "production_cutover_done";
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://ippuku-kanri.cdman1106.workers.dev";
     private static final String CHANNEL = "air_bridge";
     private static final int NOTIFICATION_ID = 2201;
@@ -222,6 +223,7 @@ public class BridgeService extends Service {
                     .putBoolean(KEY_NEEDS_NEXT_PREP, false)
                     .putBoolean(KEY_SAFETY_STOP, false)
                     .remove(KEY_SAFETY_STOP_REASON)
+                    .putBoolean(KEY_PRODUCTION_CUTOVER_DONE, false)
                     .putBoolean(KEY_PRODUCTION_V1_MIGRATED, true)
                     .apply();
         }
@@ -1108,12 +1110,20 @@ public class BridgeService extends Service {
                     throw new IllegalStateException("AUTH_" + activated.optString("error", "FAILED"));
                 }
 
+                SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+                boolean cutoverDone = prefs.getBoolean(KEY_PRODUCTION_CUTOVER_DONE, false);
                 JSONObject sessionBody = new JSONObject();
                 sessionBody.put("device", Build.MODEL == null ? "Galaxy" : Build.MODEL);
+                String sessionPath = cutoverDone
+                        ? "/api/bridge/session/start"
+                        : "/api/bridge/session/reset";
                 JSONObject session = httpJson("POST",
-                        bridgeBaseUrl() + "/api/bridge/session/start", sessionBody);
+                        bridgeBaseUrl() + sessionPath, sessionBody);
                 if (!session.optBoolean("ok", false)) {
                     throw new IllegalStateException("SESSION_" + session.optString("error", "FAILED"));
+                }
+                if (!cutoverDone) {
+                    prefs.edit().putBoolean(KEY_PRODUCTION_CUTOVER_DONE, true).apply();
                 }
 
                 JSONObject recovery = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery", null);
