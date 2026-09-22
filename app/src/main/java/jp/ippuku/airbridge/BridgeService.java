@@ -709,14 +709,59 @@ public class BridgeService extends Service {
             // 先頭Enter前は従来の実機安定値を確保。
             Thread.sleep(1800);
 
-            if (i < items.length() - 1) {
-                // 途中の商品：商品追加後、次の商品番号を入力できる位置まで戻る。
-                runLearnedFlowInternal(learned.betweenItems);
-            } else {
-                // 最後の商品：商品追加→伝票一時保存→次の注文位置まで。
-                runLearnedFlowInternal(learned.finalItem);
+            String phaseMacro = (i < items.length() - 1)
+                    ? learned.betweenItems
+                    : learned.finalItem;
+
+            if (i > 0) {
+                // 実機確認で、2商品目以降は1商品目より商品タイルのフォーカスが
+                // 1 Tabぶん手前から始まることを確認。保存済み記録そのものは変更せず、
+                // 商品タイルを決定する最初のSPACE直前だけTabを1回減らす。
+                phaseMacro = adjustAdditionalItemProductSelection(phaseMacro);
+            }
+
+            runLearnedFlowInternal(phaseMacro);
+        }
+    }
+
+    private String adjustAdditionalItemProductSelection(String macro) {
+        if (macro == null || macro.trim().isEmpty()) return macro;
+
+        String[] raw = macro.split(",");
+        List<String> tokens = new ArrayList<>();
+        for (String part : raw) {
+            String t = part == null ? "" : part.trim().toUpperCase();
+            if (!t.isEmpty()) tokens.add(t);
+        }
+
+        int firstSpace = -1;
+        for (int i = 0; i < tokens.size(); i++) {
+            if ("SPACE".equals(tokens.get(i))) {
+                firstSpace = i;
+                break;
             }
         }
+        if (firstSpace < 0) return macro;
+
+        int tabToRemove = -1;
+        for (int i = firstSpace - 1; i >= 0; i--) {
+            String t = tokens.get(i);
+            if ("TAB".equals(t)) {
+                tabToRemove = i;
+                break;
+            }
+            if ("SPACE".equals(t)) break;
+        }
+        if (tabToRemove < 0) return macro;
+
+        tokens.remove(tabToRemove);
+        // そのTabのために記録された待ち時間も一緒に除く。
+        if (tabToRemove < tokens.size() &&
+                tokens.get(tabToRemove).startsWith("WAIT:")) {
+            tokens.remove(tabToRemove);
+        }
+
+        return joinMacroTokens(tokens, 0, tokens.size());
     }
 
     private LearnedOrderTemplate getLearnedOrderTemplate() {
