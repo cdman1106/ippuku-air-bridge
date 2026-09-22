@@ -236,6 +236,9 @@ public class BridgeService extends Service {
         }
 
         SharedPreferences startupPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        // プロセス再起動・APK上書き後はAirレジのFKAフォーカス位置を信用しない。
+        // 必ず「1件目の基準位置」から開始し、正常保存後だけ連続注文補正へ移る。
+        startupPrefs.edit().putBoolean(KEY_CONTINUATION_FOCUS, false).apply();
         if (startupPrefs.getBoolean(KEY_AUTO_BRIDGE, false)) {
             startupPrefs.edit()
                     .putBoolean(KEY_AUTO_BRIDGE, false)
@@ -286,7 +289,9 @@ public class BridgeService extends Service {
                 boolean enabled = intent.getBooleanExtra(EXTRA_ENABLED, false);
                 if (enabled) {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .putBoolean(KEY_RESUME_PRODUCTION, false).apply();
+                            .putBoolean(KEY_RESUME_PRODUCTION, false)
+                            .putBoolean(KEY_CONTINUATION_FOCUS, false)
+                            .apply();
                     startProductionMonitoring();
                 } else {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -1142,6 +1147,10 @@ public class BridgeService extends Service {
     }
 
     private void startProductionMonitoring() {
+        // 本番開始/再開時は必ず初回注文用フォーカスとして扱う。
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_CONTINUATION_FOCUS, false).apply();
+
         if (!connected || target == null || hid == null) {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_AUTO_BRIDGE, false).apply();
