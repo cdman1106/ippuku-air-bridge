@@ -1126,7 +1126,8 @@ public class BridgeService extends Service {
                     prefs.edit().putBoolean(KEY_PRODUCTION_CUTOVER_DONE, true).apply();
                 }
 
-                JSONObject recovery = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery", null);
+                JSONObject recovery = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery?device=" +
+                        java.net.URLEncoder.encode(Build.MODEL == null ? "Galaxy" : Build.MODEL, "UTF-8"), null);
                 JSONArray unresolved = recovery.optJSONArray("orders");
                 if (!recovery.optBoolean("ok", false) || unresolved == null) {
                     throw new IllegalStateException("RECOVERY_CHECK_FAILED");
@@ -1170,7 +1171,8 @@ public class BridgeService extends Service {
     private void checkRecovery() {
         network.execute(() -> {
             try {
-                JSONObject response = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery", null);
+                JSONObject response = httpJson("GET", bridgeBaseUrl() + "/api/bridge/recovery?device=" +
+                        java.net.URLEncoder.encode(Build.MODEL == null ? "Galaxy" : Build.MODEL, "UTF-8"), null);
                 JSONArray orders = response.optJSONArray("orders");
                 if (!response.optBoolean("ok", false) || orders == null) {
                     publish("途中注文の確認に失敗しました。");
