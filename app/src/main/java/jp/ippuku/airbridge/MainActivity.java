@@ -187,13 +187,13 @@ public class MainActivity extends Activity {
         body.addView(btSettings);
 
         TextView autoTitle = new TextView(this);
-        autoTitle.setText("自動注文（Cloudflare → Airレジ）");
+        autoTitle.setText("本番運用（Cloudflare → Airレジ）");
         autoTitle.setTextSize(22);
         autoTitle.setPadding(0, dp(20), 0, dp(8));
         body.addView(autoTitle);
 
         TextView autoHelp = new TextView(this);
-        autoHelp.setText("開始すると3秒ごとに新規注文を確認します。保存済みの2商品実機記録を自動分解し、同じ伝票内の複数商品・複数量を順番に入力します。伝票保存後は安全のため次の注文だけ一時停止します。");
+        autoHelp.setText("「本番運用 開始」はセルフチェック後に注文監視を開始します。正常な注文は、複数商品・複数量を同じ伝票へ一時保存し、そのまま次の注文を自動処理します。Bluetooth切断・入力失敗・完了通知失敗などの異常時だけ完全停止します。");
         autoHelp.setPadding(0, 0, 0, dp(8));
         body.addView(autoHelp);
 
@@ -241,7 +241,7 @@ public class MainActivity extends Activity {
         body.addView(apiRow);
 
         TextView apiHelp = new TextView(this);
-        apiHelp.setText("お客様の注文画面とは別のBridge専用Workerを指定できます。URLを切り替えても注文画面側は変更されません。");
+        apiHelp.setText("本番ではBridge認証キーが必須です。URLと認証キーは端末内に保存され、Bridge APIだけを保護します。お客様の注文画面には認証キーを送信しません。");
         apiHelp.setPadding(0, 0, 0, dp(8));
         body.addView(apiHelp);
 
@@ -314,13 +314,13 @@ public class MainActivity extends Activity {
         autoRow.setOrientation(LinearLayout.HORIZONTAL);
 
         Button autoStart = new Button(this);
-        autoStart.setText("自動注文 監視開始");
+        autoStart.setText("本番運用 開始");
         autoStart.setMinHeight(dp(60));
         autoStart.setOnClickListener(v -> setAutoBridge(true));
         autoRow.addView(autoStart, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button autoStop = new Button(this);
-        autoStop.setText("監視停止");
+        autoStop.setText("本番運用 停止");
         autoStop.setMinHeight(dp(60));
         autoStop.setOnClickListener(v -> setAutoBridge(false));
         autoRow.addView(autoStop, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -328,14 +328,14 @@ public class MainActivity extends Activity {
         body.addView(autoRow);
 
         Button prepareNext = new Button(this);
-        prepareNext.setText("検索欄をタップ済み → 次の注文を許可");
+        prepareNext.setText("異常停止を解除して受付再開");
         prepareNext.setTextSize(18);
         prepareNext.setMinHeight(dp(60));
         prepareNext.setOnClickListener(v -> prepareNextOrder());
         body.addView(prepareNext);
 
         TextView prepareHelp = new TextView(this);
-        prepareHelp.setText("安全版：1件保存後は自動停止します。学習記録の最後で次の商品番号入力位置まで戻します。iPad画面を確認してから、このボタンを1回押してください。このボタン自体はTabやSpaceを送りません。");
+        prepareHelp.setText("通常運用では押しません。異常停止した時だけ、Airレジ画面を確認して商品番号入力位置へ戻した後に押します。このボタン自体はTabやSpaceを送らず、安全停止だけ解除します。");
         prepareHelp.setPadding(0, 0, 0, dp(10));
         body.addView(prepareHelp);
 
@@ -360,7 +360,7 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button recoveryRetry = new Button(this);
-        recoveryRetry.setText("伝票なし → 再試行");
+        recoveryRetry.setText("伝票なし・Airレジを空にした → 再試行");
         recoveryRetry.setOnClickListener(v -> recoverOrderRetry());
         recoveryRow.addView(recoveryRetry,
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -368,7 +368,7 @@ public class MainActivity extends Activity {
         body.addView(recoveryRow);
 
         TextView recoveryHelp = new TextView(this);
-        recoveryHelp.setText("必ず先にAirレジを確認します。伝票が存在する時に「再試行」を押すと重複するため、伝票ありなら完了扱いを選びます。");
+        recoveryHelp.setText("必ず先にAirレジを確認します。伝票がある場合は「完了扱い」。伝票が無い場合は、途中入力も消して商品番号入力位置へ戻してから「再試行」。復旧後は本番運用を自動再開します。");
         recoveryHelp.setPadding(0, 0, 0, dp(10));
         body.addView(recoveryHelp);
 
@@ -733,8 +733,8 @@ public class MainActivity extends Activity {
         note.setText(
                 "運用中に商品を手動送信するボタンはありません。\n" +
                 "設定後はAir Bridgeがバックグラウンド常駐し、切断時も自動再接続します。\n\n" +
-                "Cloudflare注文キュー接続済み。監視ON時は新規注文を受信し、対応済み商品をAirレジへ自動入力して伝票保存します。\n" +
-                "会計処理はメインiPadでスタッフが行います。");
+                "Cloudflare注文キュー接続済み。本番運用ON時は注文を順番に受信し、対応済み商品をAirレジへ自動入力して一時保存します。\n" +
+                "正常時は連続自動運転、異常時だけ停止します。会計処理はメインiPadでスタッフが行います。");
         body.addView(note);
 
         ScrollView sv = new ScrollView(this);
@@ -1003,11 +1003,12 @@ public class MainActivity extends Activity {
     }
 
     private void setAutoBridge(boolean enabled) {
+        saveTestSettings();
         Intent svc = new Intent(this, BridgeService.class);
         svc.setAction(BridgeService.ACTION_SET_AUTO_BRIDGE);
         svc.putExtra(BridgeService.EXTRA_ENABLED, enabled);
         startForegroundCompat(svc);
-        toast(enabled ? "自動注文の監視を開始しました。" : "自動注文の監視を停止しました。");
+        toast(enabled ? "本番セルフチェックを開始しました。" : "本番運用を停止しました。");
     }
 
     private void checkRecovery() {
@@ -1028,7 +1029,7 @@ public class MainActivity extends Activity {
         Intent svc = new Intent(this, BridgeService.class);
         svc.setAction(BridgeService.ACTION_RECOVERY_RETRY);
         startForegroundCompat(svc);
-        toast("Airレジに伝票が無い注文だけ再試行待ちへ戻します。");
+        toast("Airレジに伝票・途中入力が無いことを確認した注文だけ再試行します。");
     }
 
     private void runFullFlowTest() {
