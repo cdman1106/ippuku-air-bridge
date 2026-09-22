@@ -172,7 +172,7 @@ public class BridgeService extends Service {
                 SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
                 if (p.getBoolean(KEY_RESUME_PRODUCTION, false)) {
                     p.edit().putBoolean(KEY_RESUME_PRODUCTION, false).apply();
-                    handler.postDelayed(this::startProductionMonitoring, 600);
+                    handler.postDelayed(BridgeService.this::startProductionMonitoring, 600);
                 }
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 publish("注文専用iPadへ接続中…");
