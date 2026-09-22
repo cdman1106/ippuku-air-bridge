@@ -773,11 +773,10 @@ public class BridgeService extends Service {
                     : learned.finalItem;
 
             if (i == 0 && continuationFocus) {
-                // 動画実機確認：前の伝票を正常保存した直後の次注文では、
-                // Enter×2後に商品候補タイルが既にFKA選択済みになる。
-                // 初回用のTab×3を送ると候補を通り越して「伝票削除」へ到達するため、
-                // 最初のSPACEまでの商品選択Tabだけ全て除去する。
-                phaseMacro = adjustContinuationFirstItemSelection(phaseMacro);
+                // 連続2伝票目以降の1商品目：
+                // 実機で「初回用3 Tabは通り越す」「0 Tabは商品が入らない」を確認。
+                // 同一伝票の2商品目以降で成功済みの補正と同じく、1 Tabだけ減らす。
+                phaseMacro = adjustAdditionalItemProductSelection(phaseMacro);
             } else if (i > 0) {
                 // 同一伝票の2商品目以降は、実機確認済みの1 Tab補正を維持。
                 phaseMacro = adjustAdditionalItemProductSelection(phaseMacro);
@@ -785,45 +784,6 @@ public class BridgeService extends Service {
 
             runLearnedFlowInternal(phaseMacro);
         }
-    }
-
-    private String adjustContinuationFirstItemSelection(String macro) {
-        if (macro == null || macro.trim().isEmpty()) return macro;
-
-        String[] raw = macro.split(",");
-        List<String> tokens = new ArrayList<>();
-        for (String part : raw) {
-            String t = part == null ? "" : part.trim().toUpperCase();
-            if (!t.isEmpty()) tokens.add(t);
-        }
-
-        int firstSpace = -1;
-        int enterCount = 0;
-        int secondEnter = -1;
-        for (int i = 0; i < tokens.size(); i++) {
-            String t = tokens.get(i);
-            if ("ENTER".equals(t)) {
-                enterCount++;
-                if (enterCount == 2) secondEnter = i;
-            }
-            if ("SPACE".equals(t)) {
-                firstSpace = i;
-                break;
-            }
-        }
-        if (secondEnter < 0 || firstSpace <= secondEnter) return macro;
-
-        List<String> adjusted = new ArrayList<>();
-        for (int i = 0; i < tokens.size(); i++) {
-            String t = tokens.get(i);
-            if (i > secondEnter && i < firstSpace && "TAB".equals(t)) {
-                // このTabと、そのTab後に記録された待ち時間をセットで除去。
-                if (i + 1 < firstSpace && tokens.get(i + 1).startsWith("WAIT:")) i++;
-                continue;
-            }
-            adjusted.add(t);
-        }
-        return joinMacroTokens(adjusted, 0, adjusted.size());
     }
 
     private String adjustAdditionalItemProductSelection(String macro) {
